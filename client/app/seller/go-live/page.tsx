@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { apiFetch } from "@/lib/api";
 import { Navbar } from "@/components/layout/Navbar";
+import { CreateListingForm } from "@/components/seller/CreateListingForm";
 import {
   LiveKitRoom,
   VideoTrack,
@@ -23,6 +24,13 @@ const CATEGORIES = [
   "Vintage & Antiques",
   "Comics",
 ];
+
+interface Listing {
+  id: string;
+  type: string;
+  title: string;
+  status: string;
+}
 
 function BroadcasterVideo() {
   const { localParticipant, cameraTrack } = useLocalParticipant();
@@ -47,6 +55,94 @@ function BroadcasterVideo() {
   );
 }
 
+function ActiveListings({ streamId, refreshTrigger }: { streamId: string; refreshTrigger: number }) {
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  const fetchListings = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/listings/stream/${streamId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setListings(data.listings || []);
+      }
+    } catch {
+      // Ignore fetch errors
+    }
+  }, [streamId]);
+
+  useEffect(() => {
+    fetchListings();
+  }, [fetchListings, refreshTrigger]);
+
+  const handleClose = async (listingId: string) => {
+    setActionLoading(listingId + "-close");
+    try {
+      await apiFetch(`/listings/${listingId}/close`, { method: "POST" });
+      await fetchListings();
+    } catch {
+      // Ignore
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRandomize = async (listingId: string) => {
+    setActionLoading(listingId + "-randomize");
+    try {
+      await apiFetch(`/listings/${listingId}/randomize`, { method: "POST" });
+      await fetchListings();
+    } catch {
+      // Ignore
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const activeListings = listings.filter(l => l.status === "active" || l.status === "open");
+
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold">Active Listings</h3>
+      {activeListings.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No active listings yet.</p>
+      ) : (
+        activeListings.map(listing => (
+          <div key={listing.id} className="rounded-lg border border-border p-3 flex flex-col gap-2">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium leading-tight">{listing.title}</p>
+                <p className="text-xs text-muted-foreground capitalize">{listing.type}</p>
+              </div>
+              <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-medium shrink-0">
+                Active
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleClose(listing.id)}
+                disabled={actionLoading === listing.id + "-close"}
+                className="flex-1 h-7 text-xs font-medium rounded-md bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50 transition-colors"
+              >
+                {actionLoading === listing.id + "-close" ? "Closing..." : "Close"}
+              </button>
+              {listing.type === "break" && (
+                <button
+                  onClick={() => handleRandomize(listing.id)}
+                  disabled={actionLoading === listing.id + "-randomize"}
+                  className="flex-1 h-7 text-xs font-medium rounded-md bg-secondary text-secondary-foreground hover:bg-secondary/80 disabled:opacity-50 transition-colors"
+                >
+                  {actionLoading === listing.id + "-randomize" ? "..." : "Randomize"}
+                </button>
+              )}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 export default function GoLivePage() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
@@ -58,6 +154,7 @@ export default function GoLivePage() {
   } | null>(null);
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
+  const [listingRefresh, setListingRefresh] = useState(0);
 
   const livekitUrl =
     process.env.NEXT_PUBLIC_LIVEKIT_URL || "ws://localhost:7880";
@@ -93,6 +190,10 @@ export default function GoLivePage() {
       // Best effort
     }
     router.push("/");
+  };
+
+  const handleListingCreated = () => {
+    setListingRefresh(prev => prev + 1);
   };
 
   if (isLoading) return null;
@@ -174,10 +275,11 @@ export default function GoLivePage() {
     );
   }
 
-  // Live: show broadcaster view
+  // Live: show broadcaster view with listing management sidebar
   return (
     <div className="flex flex-col h-screen bg-black">
-      <div className="flex items-center justify-between px-4 py-2 bg-black/80 text-white z-10">
+      {/* Top bar */}
+      <div className="flex items-center justify-between px-4 py-2 bg-black/80 text-white z-10 shrink-0">
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1 bg-red-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">
             <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
@@ -192,17 +294,29 @@ export default function GoLivePage() {
           End Stream
         </button>
       </div>
-      <div className="flex-1">
-        <LiveKitRoom
-          token={streamData.token}
-          serverUrl={livekitUrl}
-          connect={true}
-          video={true}
-          audio={true}
-          className="w-full h-full"
-        >
-          <BroadcasterVideo />
-        </LiveKitRoom>
+
+      {/* Main content */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Video — main area */}
+        <div className="flex-1 min-w-0">
+          <LiveKitRoom
+            token={streamData.token}
+            serverUrl={livekitUrl}
+            connect={true}
+            video={true}
+            audio={true}
+            className="w-full h-full"
+          >
+            <BroadcasterVideo />
+          </LiveKitRoom>
+        </div>
+
+        {/* Right sidebar — listing management */}
+        <div className="w-80 bg-white text-foreground border-l border-border p-4 overflow-y-auto flex flex-col gap-4 shrink-0">
+          <CreateListingForm streamId={streamData.id} onCreated={handleListingCreated} />
+          <hr className="border-border" />
+          <ActiveListings streamId={streamData.id} refreshTrigger={listingRefresh} />
+        </div>
       </div>
     </div>
   );
