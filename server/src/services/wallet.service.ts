@@ -28,38 +28,43 @@ export async function creditWallet(
   stripePaymentIntentId: string,
   stripeEventId: string
 ) {
-  // Idempotency check
-  const existing = await prisma.processedStripeEvent.findUnique({
-    where: { id: stripeEventId },
-  });
-  if (existing) return null;
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      // Idempotency check inside transaction
+      const existing = await tx.processedStripeEvent.findUnique({
+        where: { id: stripeEventId },
+      });
+      if (existing) return null;
 
-  // Atomic credit
-  const result = await prisma.$transaction(async (tx) => {
-    await tx.processedStripeEvent.create({
-      data: { id: stripeEventId, type: "payment_intent.succeeded" },
+      await tx.processedStripeEvent.create({
+        data: { id: stripeEventId, type: "payment_intent.succeeded" },
+      });
+
+      const user = await tx.user.update({
+        where: { id: userId },
+        data: { walletBalance: { increment: amountCents } },
+      });
+
+      const txn = await tx.walletTransaction.create({
+        data: {
+          userId,
+          type: "topup",
+          amountCents,
+          balanceAfter: user.walletBalance,
+          description: `Wallet top-up of $${(amountCents / 100).toFixed(2)}`,
+          stripePaymentIntentId,
+        },
+      });
+
+      return { user, txn };
     });
 
-    const user = await tx.user.update({
-      where: { id: userId },
-      data: { walletBalance: { increment: amountCents } },
-    });
-
-    const txn = await tx.walletTransaction.create({
-      data: {
-        userId,
-        type: "topup",
-        amountCents,
-        balanceAfter: user.walletBalance,
-        description: `Wallet top-up of $${(amountCents / 100).toFixed(2)}`,
-        stripePaymentIntentId,
-      },
-    });
-
-    return { user, txn };
-  });
-
-  return result;
+    return result;
+  } catch (err: any) {
+    // P2002 = unique constraint on ProcessedStripeEvent (concurrent duplicate)
+    if (err.code === "P2002") return null;
+    throw err;
+  }
 }
 
 export async function debitWallet(
@@ -68,29 +73,30 @@ export async function debitWallet(
   description: string
 ) {
   const result = await prisma.$transaction(async (tx) => {
-    // Check balance first
-    const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
+    // Atomic check-and-decrement: only updates if balance is sufficient
+    const updated = await tx.user.updateMany({
+      where: { id: userId, walletBalance: { gte: amountCents } },
+      data: { walletBalance: { decrement: amountCents } },
+    });
 
-    if (user.walletBalance < amountCents) {
+    if (updated.count === 0) {
       throw new Error("INSUFFICIENT_FUNDS");
     }
 
-    const updated = await tx.user.update({
-      where: { id: userId },
-      data: { walletBalance: { decrement: amountCents } },
-    });
+    // Fetch updated user for balanceAfter
+    const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
 
     const txn = await tx.walletTransaction.create({
       data: {
         userId,
         type: "purchase",
         amountCents: -amountCents,
-        balanceAfter: updated.walletBalance,
+        balanceAfter: user.walletBalance,
         description,
       },
     });
 
-    return { user: updated, txn };
+    return { user, txn };
   });
 
   return result;

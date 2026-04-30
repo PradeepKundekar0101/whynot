@@ -1,12 +1,9 @@
-import { Router, Request, Response } from "express";
+import { Router, Response } from "express";
 import { z } from "zod";
-import Stripe from "stripe";
-import stripe from "../lib/stripe";
 import { authenticate } from "../middleware/authenticate";
 import { AuthenticatedRequest } from "../types";
 import {
   createTopupIntent,
-  creditWallet,
   getWalletBalance,
   getWalletTransactions,
 } from "../services/wallet.service";
@@ -34,7 +31,7 @@ router.get("/balance", authenticate, async (req: AuthenticatedRequest, res: Resp
 router.get("/transactions", authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 50, 100);
-    const offset = Number(req.query.offset) || 0;
+    const offset = Math.max(0, Number(req.query.offset) || 0);
     const transactions = await getWalletTransactions(req.user!.userId, limit, offset);
     res.json({ transactions });
   } catch (err) {
