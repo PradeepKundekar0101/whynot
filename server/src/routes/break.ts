@@ -10,6 +10,7 @@ import {
   listBreaksForStream,
 } from "../services/break.service";
 import { emitToStream } from "../websocket/emitter";
+import { paramAsString } from "../lib/express-params";
 import { SHIPPING_PROFILES, SPOT_PRESETS } from "../lib/spot-presets";
 import logger from "../lib/logger";
 
@@ -77,7 +78,7 @@ router.get("/presets", (_req, res) => {
 // GET /api/breaks/stream/:streamId — list all breaks (with their spots) in a stream
 router.get("/stream/:streamId", async (req, res) => {
   try {
-    const breaks = await listBreaksForStream(req.params.streamId);
+    const breaks = await listBreaksForStream(paramAsString(req.params.streamId));
     res.json({ breaks });
   } catch (err) {
     handleError(res, err);
@@ -87,7 +88,7 @@ router.get("/stream/:streamId", async (req, res) => {
 // GET /api/breaks/:id — single break with spots
 router.get("/:id", async (req, res) => {
   try {
-    const data = await getBreakById(req.params.id);
+    const data = await getBreakById(paramAsString(req.params.id));
     if (!data) {
       res.status(404).json({ error: { code: "NOT_FOUND", message: "Break not found" } });
       return;
@@ -134,7 +135,7 @@ router.delete(
   authenticate,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      await cancelBreak(req.params.id, req.user!.userId);
+      await cancelBreak(paramAsString(req.params.id), req.user!.userId);
       res.json({ ok: true });
     } catch (err) {
       handleError(res, err);

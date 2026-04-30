@@ -1,6 +1,5 @@
 import { Router, Request, Response } from "express";
-import Stripe from "stripe";
-import stripe from "../lib/stripe";
+import stripe, { type PaymentIntent } from "../lib/stripe";
 import { creditWallet } from "../services/wallet.service";
 import logger from "../lib/logger";
 
@@ -15,7 +14,7 @@ router.post("/", async (req: Request, res: Response) => {
     return;
   }
 
-  let event: Stripe.Event;
+  let event: ReturnType<typeof stripe.webhooks.constructEvent>;
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
   } catch (err: any) {
@@ -25,7 +24,7 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   if (event.type === "payment_intent.succeeded") {
-    const paymentIntent = event.data.object as Stripe.PaymentIntent;
+    const paymentIntent = event.data.object as PaymentIntent;
     const userId = paymentIntent.metadata.userId;
     const type = paymentIntent.metadata.type;
 

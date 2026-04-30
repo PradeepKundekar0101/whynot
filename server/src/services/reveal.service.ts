@@ -472,7 +472,14 @@ export async function completeBreak(listingId: string) {
     const listing = await tx.listing.findUnique({
       where: { id: listingId },
       include: {
-        stream: { select: { id: true, sellerId: true } },
+        stream: {
+          select: {
+            id: true,
+            sellerId: true,
+            domesticShippingFee: true,
+            combinedShippingEnabled: true,
+          },
+        },
         spots: true,
       },
     });
@@ -502,8 +509,8 @@ export async function completeBreak(listingId: string) {
 
     for (const [buyerId, buyerSpots] of byBuyer.entries()) {
       const subtotal = buyerSpots.reduce((sum, s) => sum + (s.soldPrice ?? 0), 0);
-      const baseShipping = listing.domesticShippingFee ?? DEFAULT_SHIPPING_CENTS;
-      const shipping = listing.combinedShippingEnabled
+      const baseShipping = listing.stream.domesticShippingFee ?? DEFAULT_SHIPPING_CENTS;
+      const shipping = listing.stream.combinedShippingEnabled
         ? baseShipping
         : baseShipping * buyerSpots.length;
       const tax = Math.round(subtotal * TAX_RATE);

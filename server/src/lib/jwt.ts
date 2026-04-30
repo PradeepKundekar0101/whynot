@@ -1,15 +1,18 @@
 import jwt from "jsonwebtoken";
 import { JwtPayload } from "../types";
 
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET;
-const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+const accessRaw = process.env.JWT_ACCESS_SECRET;
+const refreshRaw = process.env.JWT_REFRESH_SECRET;
 
-if (!ACCESS_SECRET || ACCESS_SECRET.length < 32) {
+if (!accessRaw || accessRaw.length < 32) {
   throw new Error("JWT_ACCESS_SECRET must be set and at least 32 characters");
 }
-if (!REFRESH_SECRET || REFRESH_SECRET.length < 32) {
+if (!refreshRaw || refreshRaw.length < 32) {
   throw new Error("JWT_REFRESH_SECRET must be set and at least 32 characters");
 }
+
+const ACCESS_SECRET: string = accessRaw;
+const REFRESH_SECRET: string = refreshRaw;
 
 export function signAccessToken(payload: JwtPayload): string {
   return jwt.sign(payload, ACCESS_SECRET, { expiresIn: "15m" });
@@ -20,9 +23,11 @@ export function signRefreshToken(payload: JwtPayload): string {
 }
 
 export function verifyAccessToken(token: string): JwtPayload {
-  return jwt.verify(token, ACCESS_SECRET) as JwtPayload;
+  const decoded = jwt.verify(token, ACCESS_SECRET);
+  return decoded as JwtPayload;
 }
 
 export function verifyRefreshToken(token: string): JwtPayload {
-  return jwt.verify(token, REFRESH_SECRET) as JwtPayload;
+  const decoded = jwt.verify(token, REFRESH_SECRET);
+  return decoded as JwtPayload;
 }

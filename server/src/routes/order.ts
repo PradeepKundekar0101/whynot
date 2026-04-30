@@ -1,4 +1,5 @@
 import { Router, Response } from "express";
+import { paramAsString } from "../lib/express-params";
 import { authenticate } from "../middleware/authenticate";
 import { AuthenticatedRequest } from "../types";
 import prisma from "../lib/prisma";
@@ -30,7 +31,7 @@ router.get("/", authenticate, async (req: AuthenticatedRequest, res: Response) =
 router.get("/:id", authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const order = await prisma.order.findUnique({
-      where: { id: req.params.id },
+      where: { id: paramAsString(req.params.id) },
       include: {
         items: { orderBy: { createdAt: "asc" } },
         listing: { select: { breakName: true, breakFormat: true } },

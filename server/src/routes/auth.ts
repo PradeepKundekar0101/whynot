@@ -51,7 +51,7 @@ router.post("/signup", authLimiter, async (req: Request, res: Response) => {
       error: {
         code: "VALIDATION_ERROR",
         message: "Invalid input",
-        details: parsed.error.errors.map((e) => ({
+        details: parsed.error.issues.map((e) => ({
           field: e.path.join("."),
           message: e.message,
         })),
@@ -103,7 +103,7 @@ router.post("/login", authLimiter, async (req: Request, res: Response) => {
       error: {
         code: "VALIDATION_ERROR",
         message: "Invalid input",
-        details: parsed.error.errors.map((e) => ({
+        details: parsed.error.issues.map((e) => ({
           field: e.path.join("."),
           message: e.message,
         })),

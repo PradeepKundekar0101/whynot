@@ -22,6 +22,7 @@ import {
   goLiveOnScheduledShow,
 } from "../services/show.service";
 import { getStreamStats } from "../services/stream-stats.service";
+import { paramAsString } from "../lib/express-params";
 import prisma from "../lib/prisma";
 import logger from "../lib/logger";
 
@@ -38,7 +39,7 @@ router.post("/", authenticate, async (req: AuthenticatedRequest, res: Response) 
   if (!parsed.success) {
     res.status(400).json({
       error: { code: "VALIDATION_ERROR", message: "Invalid input",
-        details: parsed.error.errors.map(e => ({ field: e.path.join("."), message: e.message })) },
+        details: parsed.error.issues.map((e) => ({ field: e.path.join("."), message: e.message })) },
     });
     return;
   }
@@ -110,7 +111,7 @@ router.post("/schedule", authenticate, async (req: AuthenticatedRequest, res: Re
       error: {
         code: "VALIDATION_ERROR",
         message: "Invalid input",
-        details: parsed.error.errors.map((e) => ({
+        details: parsed.error.issues.map((e) => ({
           field: e.path.join("."),
           message: e.message,
         })),
@@ -211,7 +212,7 @@ router.post(
   authenticate,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const result = await goLiveOnScheduledShow(req.params.id, req.user!.userId);
+      const result = await goLiveOnScheduledShow(paramAsString(req.params.id), req.user!.userId);
       res.json({ stream: result.stream, token: result.token });
     } catch (err: any) {
       const map: Record<string, { status: number; code: string; message: string }> = {
@@ -248,7 +249,7 @@ router.patch("/:id", authenticate, async (req: AuthenticatedRequest, res: Respon
       error: {
         code: "VALIDATION_ERROR",
         message: "Invalid input",
-        details: parsed.error.errors.map((e) => ({
+        details: parsed.error.issues.map((e) => ({
           field: e.path.join("."),
           message: e.message,
         })),
@@ -258,7 +259,7 @@ router.patch("/:id", authenticate, async (req: AuthenticatedRequest, res: Respon
   }
 
   try {
-    const updated = await updateScheduledShow(req.params.id, req.user!.userId, {
+    const updated = await updateScheduledShow(paramAsString(req.params.id), req.user!.userId, {
       ...parsed.data,
       scheduledStartAt: parsed.data.scheduledStartAt
         ? new Date(parsed.data.scheduledStartAt)
@@ -296,7 +297,7 @@ router.patch("/:id", authenticate, async (req: AuthenticatedRequest, res: Respon
 // DELETE /api/streams/:id — cancel scheduled show
 router.delete("/:id", authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const cancelled = await cancelScheduledShow(req.params.id, req.user!.userId);
+    const cancelled = await cancelScheduledShow(paramAsString(req.params.id), req.user!.userId);
     res.json({ stream: cancelled });
   } catch (err: any) {
     const map: Record<string, { status: number; code: string; message: string }> = {
@@ -321,7 +322,7 @@ router.delete("/:id", authenticate, async (req: AuthenticatedRequest, res: Respo
 // GET /api/streams/:id/stats — live stream revenue (public; updated via WS)
 router.get("/:id/stats", async (req, res) => {
   try {
-    const stats = await getStreamStats(req.params.id);
+    const stats = await getStreamStats(paramAsString(req.params.id));
     res.json(stats);
   } catch (err) {
     logger.error(err, "Get stream stats error");
@@ -332,7 +333,7 @@ router.get("/:id/stats", async (req, res) => {
 // GET /api/streams/:id
 router.get("/:id", async (req, res) => {
   try {
-    const stream = await getStreamById(req.params.id);
+    const stream = await getStreamById(paramAsString(req.params.id));
     res.json({ stream });
   } catch (err: any) {
     if (err.code === "P2025") {
@@ -350,7 +351,7 @@ router.post(
   authenticate,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const result = await getBroadcasterToken(req.params.id, req.user!.userId);
+      const result = await getBroadcasterToken(paramAsString(req.params.id), req.user!.userId);
       res.json({ stream: result.stream, token: result.token });
     } catch (err: any) {
       const map: Record<string, { status: number; code: string; message: string }> = {
@@ -372,7 +373,7 @@ router.post(
 // POST /api/streams/:id/join
 router.post("/:id/join", authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const result = await joinStream(req.params.id, req.user!.userId, req.user!.email);
+    const result = await joinStream(paramAsString(req.params.id), req.user!.userId, req.user!.email);
     res.json(result);
   } catch (err: any) {
     if (err.message === "STREAM_NOT_LIVE") {
@@ -387,7 +388,7 @@ router.post("/:id/join", authenticate, async (req: AuthenticatedRequest, res: Re
 // POST /api/streams/:id/leave
 router.post("/:id/leave", authenticate, async (_req: AuthenticatedRequest, res: Response) => {
   try {
-    await leaveStream(_req.params.id);
+    await leaveStream(paramAsString(_req.params.id));
     res.json({ message: "Left stream" });
   } catch (err) {
     logger.error(err, "Leave stream error");
@@ -398,7 +399,7 @@ router.post("/:id/leave", authenticate, async (_req: AuthenticatedRequest, res: 
 // POST /api/streams/:id/end
 router.post("/:id/end", authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const stream = await endStream(req.params.id, req.user!.userId);
+    const stream = await endStream(paramAsString(req.params.id), req.user!.userId);
     res.json({ stream });
   } catch (err: any) {
     if (err.code === "P2025") {

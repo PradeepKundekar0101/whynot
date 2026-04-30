@@ -51,7 +51,7 @@ router.post("/topup", authenticate, async (req: AuthenticatedRequest, res: Respo
       error: {
         code: "VALIDATION_ERROR",
         message: "Invalid input",
-        details: parsed.error.errors.map((e) => ({
+        details: parsed.error.issues.map((e) => ({
           field: e.path.join("."),
           message: e.message,
         })),
