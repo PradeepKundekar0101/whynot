@@ -8,9 +8,10 @@ import { registerBreakHandlers } from "./break";
 import { setIO } from "./emitter";
 import { JwtPayload } from "../types";
 import prisma from "../lib/prisma";
-import redis, { REDIS_URL } from "../lib/redis";
+import { REDIS_URL } from "../lib/redis";
 import logger from "../lib/logger";
 import { emitSystemEvent } from "../services/chat-events.service";
+import { getLiveViewerCount } from "../services/stream.service";
 
 export interface AuthenticatedSocket extends Socket {
   user?: JwtPayload;
@@ -68,10 +69,10 @@ export async function setupWebSocket(httpServer: HttpServer) {
         (socket as any).streamId = streamId;
 
         // Broadcast updated viewer count
-        const count = await redis.get(`stream:${streamId}:viewers`);
+        const count = await getLiveViewerCount(streamId);
         io.to(`stream:${streamId}`).emit("viewer:count", {
           streamId,
-          count: count ? parseInt(count) : stream.viewerCount,
+          count,
         });
 
         // Fire a system "joined" event the first time this socket joins the room.
@@ -104,13 +105,11 @@ export async function setupWebSocket(httpServer: HttpServer) {
       socket.leave(`stream:${streamId}`);
       // Broadcast updated viewer count
       try {
-        const count = await redis.get(`stream:${streamId}:viewers`);
-        if (count) {
-          io.to(`stream:${streamId}`).emit("viewer:count", {
-            streamId,
-            count: parseInt(count),
-          });
-        }
+        const count = await getLiveViewerCount(streamId);
+        io.to(`stream:${streamId}`).emit("viewer:count", {
+          streamId,
+          count,
+        });
       } catch {}
     });
 

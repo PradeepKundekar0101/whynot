@@ -57,9 +57,21 @@ export default function StreamWatchPage() {
   const [activeTab, setActiveTab] = useState<BuyerTab>("auction");
   const [search, setSearch] = useState("");
   const [openBreak, setOpenBreak] = useState<Break | null>(null);
+  const [viewerSessionId, setViewerSessionId] = useState<string | null>(null);
 
   const livekitUrl =
     process.env.NEXT_PUBLIC_LIVEKIT_URL || "wss://unacademy-7s3z9grv.livekit.cloud";
+
+  // Stable per-tab id (sessionStorage survives React Strict Mode remount double-invoke).
+  useEffect(() => {
+    const key = `whatnot:viewerSession:${streamId}`;
+    let sid = sessionStorage.getItem(key);
+    if (!sid) {
+      sid = crypto.randomUUID();
+      sessionStorage.setItem(key, sid);
+    }
+    setViewerSessionId(sid);
+  }, [streamId]);
 
   const {
     breaks,
@@ -102,28 +114,35 @@ export default function StreamWatchPage() {
     }
   }, [walletBalance, refreshUser]);
 
-  // Join stream when user + stream loaded
+  // Join stream when user + stream loaded (presence is idempotent via viewerSessionId)
   useEffect(() => {
-    if (!user || !stream || stream.status !== "live") return;
-    let joined = false;
-    const join = async () => {
+    if (!user || !stream || stream.status !== "live" || viewerSessionId == null) return;
+
+    const sidStream = streamId;
+    const sid = viewerSessionId;
+    let ignoreResult = false;
+
+    void (async () => {
       try {
-        const res = await apiFetch(`/streams/${streamId}/join`, { method: "POST" });
-        if (res.ok) {
-          const data = await res.json();
-          setToken(data.token);
-          setViewerCount(data.viewerCount);
-          joined = true;
-        }
+        const res = await apiFetch(`/streams/${sidStream}/join`, {
+          method: "POST",
+          body: JSON.stringify({ viewerSessionId: sid }),
+        });
+        if (!res.ok || ignoreResult) return;
+        const data = await res.json();
+        setToken(data.token);
+        setViewerCount(data.viewerCount);
       } catch {}
-    };
-    void join();
+    })();
+
     return () => {
-      if (joined) {
-        apiFetch(`/streams/${streamId}/leave`, { method: "POST" }).catch(() => {});
-      }
+      ignoreResult = true;
+      void apiFetch(`/streams/${sidStream}/leave`, {
+        method: "POST",
+        body: JSON.stringify({ viewerSessionId: sid }),
+      }).catch(() => {});
     };
-  }, [user, stream, streamId]);
+  }, [user, stream, streamId, viewerSessionId]);
 
   // Socket — canonical "connect to external system" pattern.
   useEffect(() => {
@@ -142,6 +161,17 @@ export default function StreamWatchPage() {
     };
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [stream, streamId]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onCount = (p: { streamId: string; count: number }) => {
+      if (p.streamId === streamId && typeof p.count === "number") setViewerCount(p.count);
+    };
+    socket.on("viewer:count", onCount);
+    return () => {
+      socket.off("viewer:count", onCount);
+    };
+  }, [socket, streamId]);
 
   const filtered = useMemo(() => {
     const list =

@@ -9,6 +9,7 @@ import {
   endStream,
   getLiveStreams,
   getStreamById,
+  getLiveViewerCount,
   resumeOwnStream,
   getBroadcasterToken,
 } from "../services/stream.service";
@@ -347,7 +348,9 @@ router.get("/:id/stats", async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const stream = await getStreamById(paramAsString(req.params.id));
-    res.json({ stream });
+    const viewerCount =
+      stream.status === "live" ? await getLiveViewerCount(stream.id) : stream.viewerCount;
+    res.json({ stream: { ...stream, viewerCount } });
   } catch (err: any) {
     if (err.code === "P2025") {
       res.status(404).json({ error: { code: "NOT_FOUND", message: "Stream not found" } });
@@ -383,14 +386,40 @@ router.post(
   }
 );
 
+const viewerPresenceSchema = z.object({
+  viewerSessionId: z.string().min(8).max(200),
+});
+
 // POST /api/streams/:id/join
 router.post("/:id/join", authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const parsed = viewerPresenceSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "viewerSessionId is required (stable id per browser tab)",
+        details: parsed.error.issues.map((i) => ({ field: i.path.join("."), message: i.message })),
+      },
+    });
+    return;
+  }
   try {
-    const result = await joinStream(paramAsString(req.params.id), req.user!.userId, req.user!.email);
+    const result = await joinStream(
+      paramAsString(req.params.id),
+      req.user!.userId,
+      req.user!.email,
+      parsed.data.viewerSessionId
+    );
     res.json(result);
   } catch (err: any) {
     if (err.message === "STREAM_NOT_LIVE") {
       res.status(400).json({ error: { code: "STREAM_NOT_LIVE", message: "Stream is not live" } });
+      return;
+    }
+    if (err.message === "INVALID_VIEWER_SESSION") {
+      res.status(400).json({
+        error: { code: "INVALID_VIEWER_SESSION", message: "Invalid viewerSessionId" },
+      });
       return;
     }
     logger.error(err, "Join stream error");
@@ -399,9 +428,11 @@ router.post("/:id/join", authenticate, async (req: AuthenticatedRequest, res: Re
 });
 
 // POST /api/streams/:id/leave
-router.post("/:id/leave", authenticate, async (_req: AuthenticatedRequest, res: Response) => {
+router.post("/:id/leave", authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const parsed = viewerPresenceSchema.partial().safeParse(req.body ?? {});
+  const viewerSessionId = parsed.success ? parsed.data.viewerSessionId : undefined;
   try {
-    await leaveStream(paramAsString(_req.params.id));
+    await leaveStream(paramAsString(req.params.id), viewerSessionId);
     res.json({ message: "Left stream" });
   } catch (err) {
     logger.error(err, "Leave stream error");
