@@ -9,7 +9,12 @@ import {
   useRoomContext,
 } from "@livekit/components-react";
 import { useTrackMutedIndicator } from "@livekit/components-react/hooks";
-import { Track, ConnectionState, RoomEvent } from "livekit-client";
+import {
+  Track,
+  ConnectionState,
+  RoomEvent,
+  type TrackPublication,
+} from "livekit-client";
 import { useCallback, useEffect, useState } from "react";
 import "@livekit/components-styles";
 import { CameraOffPlaceholder } from "./CameraOffPlaceholder";
@@ -18,6 +23,25 @@ export interface StreamSellerInfo {
   username: string;
   displayName: string;
   avatarUrl: string | null;
+}
+
+/**
+ * Reads the muted state of a single subscribed track. Must only be rendered
+ * when `trackRef` is defined — calling `useTrackMutedIndicator(undefined)`
+ * throws "No TrackRef" inside the LiveKit SDK and used to crash the page.
+ */
+function MutedFlag({
+  trackRef,
+  onChange,
+}: {
+  trackRef: NonNullable<ReturnType<typeof useTracks>[number]>;
+  onChange: (isMuted: boolean) => void;
+}) {
+  const { isMuted } = useTrackMutedIndicator(trackRef);
+  useEffect(() => {
+    onChange(isMuted);
+  }, [isMuted, onChange]);
+  return null;
 }
 
 function VideoDisplay({
@@ -33,8 +57,14 @@ function VideoDisplay({
   const audioTracks = useTracks([Track.Source.Microphone], { onlySubscribed: true });
   const videoTrackRef = tracks[0];
   const audioTrackRef = audioTracks[0];
-  const { isMuted: sellerCameraMuted } = useTrackMutedIndicator(videoTrackRef);
-  const { isMuted: sellerMicMuted } = useTrackMutedIndicator(audioTrackRef);
+
+  // Mute state is reported up from the conditionally-rendered MutedFlag children
+  // below. We start optimistic ("not muted") and let the LiveKit SDK correct us.
+  const [sellerCameraMuted, setSellerCameraMuted] = useState(false);
+  const [sellerMicMuted, setSellerMicMuted] = useState(false);
+
+  const handleCamMuted = useCallback((m: boolean) => setSellerCameraMuted(m), []);
+  const handleMicMuted = useCallback((m: boolean) => setSellerMicMuted(m), []);
 
   // Track number of remote participants so we can distinguish "seller hasn't published yet"
   // from "we're not actually connected".
@@ -60,12 +90,9 @@ function VideoDisplay({
     };
   }, [room]);
 
-  // Surface a hint if we sit in "Connecting" for too long — usually means LiveKit isn't reachable
-  // or the SDK never opened the WebSocket. This synchronizes a derived UI flag
-  // with the LiveKit connection-state machine, which is exactly what an effect is for.
+  // Surface a hint if we sit in "Connecting" for too long.
   const [slowConnect, setSlowConnect] = useState(false);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSlowConnect(false);
     if (connectionState !== ConnectionState.Connecting) return;
     const t = setTimeout(() => setSlowConnect(true), 15000);
@@ -101,65 +128,87 @@ function VideoDisplay({
       <div className="flex flex-col items-center justify-center gap-1 h-full bg-black text-red-300 text-sm px-6 text-center">
         <p className="font-medium text-white">Disconnected</p>
         <p className="text-xs text-neutral-400">
-          Check that LiveKit (<code className="text-neutral-300">wss://unacademy-7s3z9grv.livekit.cloud</code>) is reachable.
+          Check that LiveKit (<code className="text-neutral-300">{serverUrl}</code>) is reachable.
         </p>
       </div>
     );
   }
 
+  // Mute-flag children render only when the corresponding track exists.
+  const flags = (
+    <>
+      {videoTrackRef && (
+        <MutedFlag trackRef={videoTrackRef} onChange={handleCamMuted} />
+      )}
+      {audioTrackRef && (
+        <MutedFlag trackRef={audioTrackRef} onChange={handleMicMuted} />
+      )}
+    </>
+  );
+
   if (!videoTrackRef) {
-    // Two reasons we can land here:
-    //  1. Seller hasn't published any tracks yet (remoteCount === 0)
-    //  2. Seller is connected but never published camera
+    // Either seller hasn't published yet, or seller is connected without camera.
     if (remoteCount === 0 || !seller) {
       return (
-        <div className="flex items-center justify-center h-full bg-black text-white text-sm">
-          {remoteCount === 0
-            ? "Waiting for seller to start broadcasting..."
-            : "Waiting for video..."}
-        </div>
+        <>
+          {flags}
+          <div className="flex items-center justify-center h-full bg-black text-white text-sm">
+            {remoteCount === 0
+              ? "Waiting for seller to start broadcasting..."
+              : "Waiting for video..."}
+          </div>
+        </>
       );
     }
     return (
-      <CameraOffPlaceholder
-        variant="buyer"
-        displayName={seller.displayName}
-        username={seller.username}
-        avatarUrl={seller.avatarUrl}
-        micOn={!!audioTrackRef && !sellerMicMuted}
-      />
+      <>
+        {flags}
+        <CameraOffPlaceholder
+          variant="buyer"
+          displayName={seller.displayName}
+          username={seller.username}
+          avatarUrl={seller.avatarUrl}
+          micOn={!!audioTrackRef && !sellerMicMuted}
+        />
+      </>
     );
   }
 
   // Camera publication can stay subscribed while muted — `<VideoTrack>` would paint black.
-  const hasLiveVideoFrames =
-    !sellerCameraMuted && videoTrackRef.publication?.track != null;
+  const pub = videoTrackRef.publication as TrackPublication | undefined;
+  const hasLiveVideoFrames = !sellerCameraMuted && pub?.track != null;
 
   if (!hasLiveVideoFrames && seller) {
     return (
-      <CameraOffPlaceholder
-        variant="buyer"
-        displayName={seller.displayName}
-        username={seller.username}
-        avatarUrl={seller.avatarUrl}
-        micOn={!!audioTrackRef && !sellerMicMuted}
-      />
+      <>
+        {flags}
+        <CameraOffPlaceholder
+          variant="buyer"
+          displayName={seller.displayName}
+          username={seller.username}
+          avatarUrl={seller.avatarUrl}
+          micOn={!!audioTrackRef && !sellerMicMuted}
+        />
+      </>
     );
   }
 
   if (!hasLiveVideoFrames) {
     return (
-      <div className="flex items-center justify-center h-full bg-black text-white text-sm px-6 text-center">
-        Waiting for video...
-      </div>
+      <>
+        {flags}
+        <div className="flex items-center justify-center h-full bg-black text-white text-sm px-6 text-center">
+          Waiting for video...
+        </div>
+      </>
     );
   }
 
   return (
-    <VideoTrack
-      trackRef={videoTrackRef}
-      className="w-full h-full object-contain"
-    />
+    <>
+      {flags}
+      <VideoTrack trackRef={videoTrackRef} className="w-full h-full object-contain" />
+    </>
   );
 }
 
