@@ -3,6 +3,8 @@ import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import authRoutes from "./routes/auth";
+import walletRoutes from "./routes/wallet";
+import webhookRoutes from "./routes/webhook";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -13,6 +15,10 @@ app.use(cors({
   credentials: true,
 }));
 app.use(cookieParser());
+
+// Webhook route MUST be before express.json() — it needs raw body
+app.use("/api/wallet/webhook", express.raw({ type: "application/json" }), webhookRoutes);
+
 app.use(express.json({ limit: "10kb" }));
 
 app.get("/api/health", (_req, res) => {
@@ -20,6 +26,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api/wallet", walletRoutes);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
