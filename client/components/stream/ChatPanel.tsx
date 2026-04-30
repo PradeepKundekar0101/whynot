@@ -37,7 +37,7 @@ interface ChatPanelProps {
 const MAX_KEEP = 200;
 
 export function ChatPanel({ streamId, socket: externalSocket, variant = "light" }: ChatPanelProps) {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const [messages, setMessages] = useState<ChatItem[]>([]);
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
@@ -102,8 +102,11 @@ export function ChatPanel({ streamId, socket: externalSocket, variant = "light" 
 
     // Standalone socket fallback (chat panel used without parent socket).
     const token = getAccessToken();
-    if (!token) return;
-    const socket = io(API_ORIGIN, { auth: { token } });
+    if (authLoading || !token) return;
+    const socket = io(API_ORIGIN, {
+      auth: { token },
+      transports: ["websocket", "polling"],
+    });
     socketRef.current = socket;
     socket.on("connect", () => {
       setConnected(true);
@@ -122,7 +125,7 @@ export function ChatPanel({ streamId, socket: externalSocket, variant = "light" 
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [streamId, externalSocket]);
+  }, [streamId, externalSocket, authLoading]);
 
   // Auto-scroll: stick to bottom unless user scrolled up.
   useEffect(() => {

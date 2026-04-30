@@ -295,7 +295,7 @@ function ControlButton({
 
 export function BroadcasterView({ streamId, token, title }: BroadcasterViewProps) {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const [liveKitError, setLiveKitError] = useState<string | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("auction");
@@ -322,9 +322,14 @@ export function BroadcasterView({ streamId, token, title }: BroadcasterViewProps
   // socket reference to subscribers. This is the canonical "connect to external
   // system" pattern from the React docs.
   useEffect(() => {
+    if (authLoading) return;
+
     const accessToken = getAccessToken();
     if (!accessToken) return;
-    const s = io(API_ORIGIN, { auth: { token: accessToken } });
+    const s = io(API_ORIGIN, {
+      auth: { token: accessToken },
+      transports: ["websocket", "polling"],
+    });
     s.on("connect", () => s.emit("stream:join", streamId));
     /* eslint-disable react-hooks/set-state-in-effect */
     setSocket(s);
@@ -334,7 +339,7 @@ export function BroadcasterView({ streamId, token, title }: BroadcasterViewProps
       setSocket(null);
     };
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [streamId]);
+  }, [streamId, authLoading]);
 
   // Cross-component handoff: the completion summary fires this event when the
   // seller clicks "Create Another Break".

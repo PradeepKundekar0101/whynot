@@ -12,6 +12,7 @@ import { REDIS_URL } from "../lib/redis";
 import logger from "../lib/logger";
 import { emitSystemEvent } from "../services/chat-events.service";
 import { getLiveViewerCount } from "../services/stream.service";
+import { getAllowedClientOrigins } from "../lib/client-origins";
 
 export interface AuthenticatedSocket extends Socket {
   user?: JwtPayload;
@@ -20,7 +21,7 @@ export interface AuthenticatedSocket extends Socket {
 export async function setupWebSocket(httpServer: HttpServer) {
   const io = new Server(httpServer, {
     cors: {
-      origin: process.env.CLIENT_URL || "http://localhost:3000",
+      origin: getAllowedClientOrigins(),
       credentials: true,
     },
   });

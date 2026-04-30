@@ -16,15 +16,30 @@ import { setupWebSocket } from "./websocket";
 import logger from "./lib/logger";
 import { connectRedis } from "./lib/redis";
 import { startWorkers } from "./workers";
+import { getAllowedClientOrigins } from "./lib/client-origins";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+const allowedClientOrigins = getAllowedClientOrigins();
+
 app.use(helmet());
-app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+      if (allowedClientOrigins.includes(origin)) {
+        callback(null, origin);
+        return;
+      }
+      callback(null, false);
+    },
+    credentials: true,
+  })
+);
 app.use(cookieParser());
 app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === "/api/health" } }));
 

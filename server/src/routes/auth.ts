@@ -7,6 +7,10 @@ import { authenticate } from "../middleware/authenticate";
 import { AuthenticatedRequest } from "../types";
 import prisma from "../lib/prisma";
 import logger from "../lib/logger";
+import {
+  getRefreshTokenClearCookieOptions,
+  getRefreshTokenCookieOptions,
+} from "../lib/refresh-token-cookie";
 
 const router = Router();
 
@@ -36,14 +40,6 @@ const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
-const REFRESH_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax" as const,
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-  path: "/",
-};
-
 router.post("/signup", authLimiter, async (req: Request, res: Response) => {
   const parsed = signupSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -62,7 +58,7 @@ router.post("/signup", authLimiter, async (req: Request, res: Response) => {
 
   try {
     const result = await createUser(parsed.data);
-    res.cookie("refreshToken", result.refreshToken, REFRESH_COOKIE_OPTIONS);
+    res.cookie("refreshToken", result.refreshToken, getRefreshTokenCookieOptions());
     res.status(201).json({
       user: {
         id: result.user.id,
@@ -121,7 +117,7 @@ router.post("/login", authLimiter, async (req: Request, res: Response) => {
       return;
     }
 
-    res.cookie("refreshToken", result.refreshToken, REFRESH_COOKIE_OPTIONS);
+    res.cookie("refreshToken", result.refreshToken, getRefreshTokenCookieOptions());
     res.json({
       user: {
         id: result.user.id,
@@ -183,7 +179,7 @@ router.get("/me", authenticate, async (req: AuthenticatedRequest, res: Response)
 });
 
 router.post("/logout", (_req: Request, res: Response) => {
-  res.clearCookie("refreshToken", { path: "/" });
+  res.clearCookie("refreshToken", getRefreshTokenClearCookieOptions());
   res.json({ message: "Logged out" });
 });
 

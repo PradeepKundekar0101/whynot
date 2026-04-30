@@ -144,12 +144,17 @@ export default function StreamWatchPage() {
     };
   }, [user, stream, streamId, viewerSessionId]);
 
-  // Socket — canonical "connect to external system" pattern.
+  // Socket — wait for auth bootstrap so refresh has populated in-memory JWT.
   useEffect(() => {
+    if (authLoading) return;
+
     const accessToken = getAccessToken();
     if (!accessToken || !stream) return;
 
-    const s = io(API_ORIGIN, { auth: { token: accessToken } });
+    const s = io(API_ORIGIN, {
+      auth: { token: accessToken },
+      transports: ["websocket", "polling"],
+    });
     s.on("connect", () => s.emit("stream:join", streamId));
     /* eslint-disable react-hooks/set-state-in-effect */
     setSocket(s);
@@ -160,7 +165,7 @@ export default function StreamWatchPage() {
       setSocket(null);
     };
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [stream, streamId]);
+  }, [stream, streamId, authLoading]);
 
   useEffect(() => {
     if (!socket) return;
