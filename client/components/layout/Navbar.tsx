@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { apiFetch } from "@/lib/api";
 import { Search, Heart, MessageCircle, Bell, Gift, User, Settings, ShoppingBag, LogOut, Video, TrendingUp } from "lucide-react";
 import { Wallet } from "lucide-react";
+import { NavbarPopover } from "./NavbarPopover";
 
 export function Navbar() {
   const { user, logout, refreshUser } = useAuth();
@@ -78,10 +79,50 @@ export function Navbar() {
                   {enrolling ? "Enabling..." : "Become a Seller"}
                 </button>
               )}
-              <button className="p-2 rounded-full hover:bg-secondary"><Heart className="h-5 w-5" /></button>
-              <button className="p-2 rounded-full hover:bg-secondary"><MessageCircle className="h-5 w-5" /></button>
-              <button className="p-2 rounded-full hover:bg-secondary"><Bell className="h-5 w-5" /></button>
-              <button className="p-2 rounded-full hover:bg-secondary"><Gift className="h-5 w-5" /></button>
+              <NavbarPopover
+                icon={<Heart className="h-5 w-5" />}
+                label="Saved shows"
+                title="Saved shows"
+              >
+                <Heart className="h-6 w-6 text-muted-foreground/40 mx-auto mb-2" />
+                <p className="text-sm font-medium">No saved shows yet</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Tap the heart on any show to save it for later.
+                </p>
+              </NavbarPopover>
+              <NavbarPopover
+                icon={<MessageCircle className="h-5 w-5" />}
+                label="Messages"
+                title="Messages"
+              >
+                <MessageCircle className="h-6 w-6 text-muted-foreground/40 mx-auto mb-2" />
+                <p className="text-sm font-medium">No messages yet</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Conversations with sellers and buyers will appear here.
+                </p>
+              </NavbarPopover>
+              <NavbarPopover
+                icon={<Bell className="h-5 w-5" />}
+                label="Notifications"
+                title="Notifications"
+              >
+                <Bell className="h-6 w-6 text-muted-foreground/40 mx-auto mb-2" />
+                <p className="text-sm font-medium">You&rsquo;re all caught up</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Show reminders, win confirmations, and seller updates will land here.
+                </p>
+              </NavbarPopover>
+              <NavbarPopover
+                icon={<Gift className="h-5 w-5" />}
+                label="Rewards"
+                title="Rewards"
+              >
+                <Gift className="h-6 w-6 text-muted-foreground/40 mx-auto mb-2" />
+                <p className="text-sm font-medium">No rewards yet</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Earn rewards by referring friends and shopping live shows.
+                </p>
+              </NavbarPopover>
               <Link
                 href="/wallet"
                 className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border hover:bg-secondary transition-colors text-sm font-semibold"

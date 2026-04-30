@@ -1,12 +1,29 @@
-import { MockCategory } from "@/lib/mock-data";
+import Link from "next/link";
 
-export function CategoryTile({ category }: { category: MockCategory }) {
+interface CategoryTileProps {
+  label: string;
+  /** Number of streams currently live in this category. Hidden when 0. */
+  liveCount?: number;
+}
+
+export function CategoryTile({ label, liveCount = 0 }: CategoryTileProps) {
+  const href = `/browse?category=${encodeURIComponent(label)}`;
   return (
-    <button className="flex-shrink-0 flex flex-col items-center justify-center w-40 h-24 rounded-xl bg-primary/20 hover:bg-primary/30 transition-colors">
-      <span className="text-sm font-semibold text-foreground">{category.name}</span>
-      <span className="text-xs text-muted-foreground mt-1">
-        {category.viewerCount.toLocaleString()} watching
+    <Link
+      href={href}
+      className="flex-shrink-0 flex flex-col items-center justify-center w-40 h-24 rounded-xl bg-primary/15 hover:bg-primary/25 transition-colors text-center px-3"
+    >
+      <span className="text-sm font-semibold text-foreground line-clamp-2 leading-tight">
+        {label}
       </span>
-    </button>
+      {liveCount > 0 ? (
+        <span className="text-xs text-muted-foreground mt-1 inline-flex items-center gap-1">
+          <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+          {liveCount} live
+        </span>
+      ) : (
+        <span className="text-xs text-muted-foreground mt-1">Browse</span>
+      )}
+    </Link>
   );
 }

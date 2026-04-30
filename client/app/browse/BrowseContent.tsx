@@ -2,13 +2,30 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { Radio } from "lucide-react";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
 import { StreamCard, StreamCardData } from "@/components/stream/StreamCard";
-import { mockCategories, mockStreams } from "@/lib/mock-data";
 import { apiFetch } from "@/lib/api";
+import { findCategory, SHOW_CATEGORIES } from "@/lib/show-categories";
 
-const ALL_CATEGORIES = ["All", ...mockCategories.map((c) => c.name)];
+const ALL_CATEGORIES = ["All", ...SHOW_CATEGORIES.map((c) => c.label)];
+
+interface ApiStream {
+  id: string;
+  title: string;
+  category: string;
+  primaryCategory: string | null;
+  viewerCount: number;
+  thumbnailUrl: string | null;
+  seller: { username: string; avatarUrl: string | null } | null;
+}
+
+function categoryLabelFor(stream: ApiStream): string {
+  const slug = stream.primaryCategory ?? stream.category;
+  if (!slug) return "Uncategorized";
+  return findCategory(slug)?.label ?? slug;
+}
 
 export function BrowseContent() {
   const searchParams = useSearchParams();
@@ -18,53 +35,42 @@ export function BrowseContent() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     const load = async () => {
       setLoading(true);
       try {
-        const url =
-          activeCategory === "All"
-            ? "/streams/live"
-            : `/streams/live?category=${encodeURIComponent(activeCategory)}`;
-        const res = await apiFetch(url);
-        if (res.ok) {
+        // Server filters by stored category string. We pass either the slug
+        // (new schedule-a-show rows) or the human label (legacy rows). The
+        // browse-all path skips the filter entirely and we filter client-side.
+        const res = await apiFetch("/streams/live");
+        if (!cancelled && res.ok) {
           const data = await res.json();
-          if (data.streams && data.streams.length > 0) {
-            setStreams(
-              data.streams.map((s: any) => ({
-                id: s.id,
-                title: s.title,
-                category: s.category,
-                viewerCount: s.viewerCount,
-                thumbnailUrl: s.thumbnailUrl,
-                isLive: true,
-                sellerUsername: s.seller?.username || "unknown",
-                sellerAvatar: s.seller?.avatarUrl || "",
-              }))
-            );
-            return;
-          }
+          const all: ApiStream[] = data.streams ?? [];
+          const filtered =
+            activeCategory === "All"
+              ? all
+              : all.filter((s) => categoryLabelFor(s) === activeCategory);
+          setStreams(
+            filtered.map((s) => ({
+              id: s.id,
+              title: s.title,
+              category: categoryLabelFor(s),
+              viewerCount: s.viewerCount,
+              thumbnailUrl: s.thumbnailUrl,
+              isLive: true,
+              sellerUsername: s.seller?.username || "unknown",
+              sellerAvatar: s.seller?.avatarUrl || "",
+            }))
+          );
         }
-      } catch {}
-
-      // Fallback to mock data
-      const filtered =
-        activeCategory === "All"
-          ? mockStreams
-          : mockStreams.filter((s) => s.category === activeCategory);
-      setStreams(
-        filtered.map((s) => ({
-          id: s.id,
-          title: s.title,
-          category: s.category,
-          viewerCount: s.viewerCount,
-          thumbnailUrl: s.thumbnailUrl,
-          isLive: s.isLive,
-          sellerUsername: s.sellerUsername,
-          sellerAvatar: s.sellerAvatar,
-        }))
-      );
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     };
-    load().finally(() => setLoading(false));
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [activeCategory]);
 
   const handleCategoryClick = (cat: string) => {
@@ -102,8 +108,11 @@ export function BrowseContent() {
         {loading ? (
           <p className="text-muted-foreground">Loading streams...</p>
         ) : streams.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-lg font-semibold mb-2">No live streams</p>
+          <div className="rounded-2xl border border-dashed border-border bg-white p-10 text-center">
+            <div className="inline-flex w-12 h-12 rounded-full bg-secondary items-center justify-center mb-3">
+              <Radio className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <p className="font-semibold mb-1">No live shows</p>
             <p className="text-sm text-muted-foreground">
               {activeCategory !== "All"
                 ? `No one is streaming in ${activeCategory} right now.`
