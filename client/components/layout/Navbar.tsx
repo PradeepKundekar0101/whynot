@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { Search, Heart, MessageCircle, Bell, Gift } from "lucide-react";
+import { Wallet } from "lucide-react";
 
 export function Navbar() {
   const { user, logout } = useAuth();
@@ -36,6 +37,14 @@ export function Navbar() {
               <button className="p-2 rounded-full hover:bg-secondary"><MessageCircle className="h-5 w-5" /></button>
               <button className="p-2 rounded-full hover:bg-secondary"><Bell className="h-5 w-5" /></button>
               <button className="p-2 rounded-full hover:bg-secondary"><Gift className="h-5 w-5" /></button>
+              <Link
+                href="/wallet"
+                className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border hover:bg-secondary transition-colors text-sm font-semibold"
+                title="Wallet balance"
+              >
+                <Wallet className="h-4 w-4" />
+                ${(user.walletBalance / 100).toFixed(2)}
+              </Link>
               <button onClick={() => logout()}
                 className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-sm font-bold text-primary-foreground"
                 title={`Logged in as ${user.username}`}>
