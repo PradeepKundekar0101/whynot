@@ -168,7 +168,7 @@ function ShowCard({
 }
 
 export default function SellerDashboard() {
-  const { user, isLoading, refreshUser } = useAuth();
+  const { user, isLoading } = useAuth();
   const router = useRouter();
   const [stats, setStats] = useState<SellerStats | null>(null);
   const [shows, setShows] = useState<Show[]>([]);
@@ -190,8 +190,6 @@ export default function SellerDashboard() {
     setShowsLoading(true);
     setLoadError(null);
     try {
-      await refreshUser();
-
       let upcomingRes: Response;
       let statsRes: Response;
       try {
@@ -240,15 +238,21 @@ export default function SellerDashboard() {
     } finally {
       setShowsLoading(false);
     }
-  }, [refreshUser]);
+  }, []);
+
+  // Depend on stable scalar fields, not the `user` object reference, so a
+  // re-fetched-but-equal user from auth context doesn't re-trigger this effect
+  // (which would re-run loadShows in an infinite loop).
+  const userId = user?.id ?? null;
+  const isSellerEnabled = user?.isSellerEnabled ?? false;
 
   useEffect(() => {
     if (isLoading) return;
-    if (!user) {
+    if (!userId) {
       router.push("/login");
       return;
     }
-    if (!user.isSellerEnabled) {
+    if (!isSellerEnabled) {
       router.push("/");
       return;
     }
@@ -265,7 +269,7 @@ export default function SellerDashboard() {
         document.removeEventListener("visibilitychange", onVisibility);
       }
     };
-  }, [user, isLoading, router, loadShows]);
+  }, [userId, isSellerEnabled, isLoading, router, loadShows]);
 
   useEffect(() => {
     const handler = () => {
