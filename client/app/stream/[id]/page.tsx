@@ -2,11 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/hooks/useAuth";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getAccessToken } from "@/lib/api";
 import { Navbar } from "@/components/layout/Navbar";
 import { LiveStreamPlayer } from "@/components/stream/LiveStreamPlayer";
 import { ChatPanel } from "@/components/stream/ChatPanel";
+import { ListingsPanel } from "@/components/stream/ListingsPanel";
+import { ConfettiOverlay } from "@/components/stream/ConfettiOverlay";
 
 interface StreamData {
   id: string;
@@ -33,6 +36,8 @@ export default function StreamWatchPage() {
   const [viewerCount, setViewerCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [confettiCount, setConfettiCount] = useState(0);
 
   const livekitUrl =
     process.env.NEXT_PUBLIC_LIVEKIT_URL || "ws://localhost:7880";
@@ -89,6 +94,32 @@ export default function StreamWatchPage() {
     };
   }, [user, stream, streamId]);
 
+  // Create shared Socket.IO connection
+  useEffect(() => {
+    const accessToken = getAccessToken();
+    if (!accessToken || !stream) return;
+
+    const s = io(process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001", {
+      auth: { token: accessToken },
+    });
+
+    s.on("connect", () => {
+      s.emit("stream:join", streamId);
+    });
+
+    s.on("confetti", () => {
+      setConfettiCount(c => c + 1);
+    });
+
+    setSocket(s);
+
+    return () => {
+      s.emit("stream:leave", streamId);
+      s.disconnect();
+      setSocket(null);
+    };
+  }, [stream, streamId]);
+
   if (loading || authLoading) {
     return (
       <div className="flex flex-col min-h-screen">
@@ -125,12 +156,9 @@ export default function StreamWatchPage() {
     <div className="flex flex-col min-h-screen">
       <Navbar />
       <div className="flex flex-1">
-        {/* Left panel — placeholder for shop/listings (Phase 5) */}
-        <aside className="hidden lg:flex flex-col w-80 border-r border-border p-4 overflow-y-auto">
-          <h3 className="text-sm font-semibold mb-4">Shop</h3>
-          <p className="text-sm text-muted-foreground">
-            Listings will appear here during auctions.
-          </p>
+        {/* Left panel — listings/shop */}
+        <aside className="hidden lg:flex flex-col w-80 border-r border-border overflow-y-auto">
+          <ListingsPanel streamId={streamId} socket={socket} />
         </aside>
 
         {/* Center — Video */}
@@ -191,9 +219,12 @@ export default function StreamWatchPage() {
 
         {/* Right panel — Chat */}
         <aside className="hidden lg:flex flex-col w-80 border-l border-border">
-          <ChatPanel streamId={streamId} />
+          <ChatPanel streamId={streamId} socket={socket} />
         </aside>
       </div>
+
+      {/* Confetti overlay */}
+      <ConfettiOverlay trigger={confettiCount} />
     </div>
   );
 }

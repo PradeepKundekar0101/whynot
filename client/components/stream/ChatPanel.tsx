@@ -18,9 +18,10 @@ interface ChatMessage {
 
 interface ChatPanelProps {
   streamId: string;
+  socket?: Socket | null;
 }
 
-export function ChatPanel({ streamId }: ChatPanelProps) {
+export function ChatPanel({ streamId, socket: externalSocket }: ChatPanelProps) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -45,8 +46,44 @@ export function ChatPanel({ streamId }: ChatPanelProps) {
     loadHistory();
   }, [streamId]);
 
-  // Connect to Socket.IO
+  // Use external socket if provided, otherwise create our own
   useEffect(() => {
+    if (externalSocket !== undefined) {
+      // Use externally provided socket (may be null while connecting)
+      socketRef.current = externalSocket;
+
+      if (externalSocket) {
+        setConnected(externalSocket.connected);
+
+        const onConnect = () => setConnected(true);
+        const onDisconnect = () => setConnected(false);
+        const onChatMessage = (msg: ChatMessage) => {
+          setMessages((prev) => {
+            const updated = [...prev, msg];
+            return updated.length > 200 ? updated.slice(-200) : updated;
+          });
+        };
+        const onChatError = (data: { message: string }) => {
+          setError(data.message);
+          setTimeout(() => setError(""), 3000);
+        };
+
+        externalSocket.on("connect", onConnect);
+        externalSocket.on("disconnect", onDisconnect);
+        externalSocket.on("chat:message", onChatMessage);
+        externalSocket.on("chat:error", onChatError);
+
+        return () => {
+          externalSocket.off("connect", onConnect);
+          externalSocket.off("disconnect", onDisconnect);
+          externalSocket.off("chat:message", onChatMessage);
+          externalSocket.off("chat:error", onChatError);
+        };
+      }
+      return;
+    }
+
+    // No external socket provided — create our own
     const token = getAccessToken();
     if (!token) return;
 
@@ -82,7 +119,7 @@ export function ChatPanel({ streamId }: ChatPanelProps) {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [streamId]);
+  }, [streamId, externalSocket]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
