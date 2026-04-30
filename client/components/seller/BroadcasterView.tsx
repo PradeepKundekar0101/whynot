@@ -15,14 +15,18 @@ import {
   Plus,
   Search,
   Copy,
-  Volume2,
+  Mic,
+  MicOff,
+  Video as VideoIcon,
+  VideoOff,
   Share2,
-  Pin,
   Trash2,
   ChevronRight,
+  Check,
 } from "lucide-react";
 import { apiFetch, getAccessToken, API_ORIGIN } from "@/lib/api";
 import { ChatPanel } from "@/components/stream/ChatPanel";
+import { CameraOffPlaceholder } from "@/components/stream/CameraOffPlaceholder";
 import { ConfettiOverlay } from "@/components/stream/ConfettiOverlay";
 import { SpinAnimation } from "@/components/stream/break/SpinAnimation";
 import { BreakCreationModal } from "@/components/seller/break/BreakCreationModal";
@@ -54,8 +58,15 @@ const TABS = [
 type TabId = (typeof TABS)[number]["id"];
 
 function BroadcasterVideo({ liveKitError }: { liveKitError: string | null }) {
+  const { user } = useAuth();
   const connectionState = useConnectionState();
-  const { localParticipant, cameraTrack, lastCameraError } = useLocalParticipant();
+  const {
+    localParticipant,
+    cameraTrack,
+    lastCameraError,
+    isCameraEnabled,
+    isMicrophoneEnabled,
+  } = useLocalParticipant();
 
   if (liveKitError) {
     return (
@@ -87,6 +98,20 @@ function BroadcasterVideo({ liveKitError }: { liveKitError: string | null }) {
     );
   }
 
+  // Seller intentionally turned the camera off. Show a friendly self-directed
+  // placeholder so they remember the camera is paused.
+  if (!isCameraEnabled) {
+    return (
+      <CameraOffPlaceholder
+        variant="seller"
+        displayName={user?.displayName ?? user?.username ?? "You"}
+        username={user?.username ?? null}
+        avatarUrl={user?.avatarUrl ?? null}
+        micOn={isMicrophoneEnabled}
+      />
+    );
+  }
+
   if (!cameraTrack?.track) {
     return (
       <div className="flex items-center justify-center h-full bg-black text-white text-sm">
@@ -104,6 +129,139 @@ function BroadcasterVideo({ liveKitError }: { liveKitError: string | null }) {
       }}
       className="w-full h-full object-contain"
     />
+  );
+}
+
+/**
+ * Floating broadcaster controls overlaid on the video preview. Lives INSIDE
+ * `<LiveKitRoom>` so it can use `useLocalParticipant` to actually toggle
+ * publishing of the local mic / camera tracks.
+ */
+function BroadcasterControls({ buyerUrl }: { buyerUrl: string }) {
+  const { localParticipant, isMicrophoneEnabled, isCameraEnabled } = useLocalParticipant();
+  const [busy, setBusy] = useState<"mic" | "camera" | null>(null);
+  const [shareState, setShareState] = useState<"idle" | "copied" | "error">("idle");
+
+  const toggleMic = async () => {
+    if (!localParticipant || busy === "mic") return;
+    setBusy("mic");
+    try {
+      await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const toggleCamera = async () => {
+    if (!localParticipant || busy === "camera") return;
+    setBusy("camera");
+    try {
+      await localParticipant.setCameraEnabled(!isCameraEnabled);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const share = async () => {
+    if (!buyerUrl) return;
+    // Prefer the native share sheet on mobile; fall back to clipboard on desktop.
+    try {
+      if (typeof navigator !== "undefined" && navigator.share) {
+        await navigator.share({ title: "Watch my live show", url: buyerUrl });
+        setShareState("copied");
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(buyerUrl);
+        setShareState("copied");
+      } else {
+        throw new Error("clipboard unavailable");
+      }
+    } catch {
+      // User dismissed the share sheet OR clipboard blocked.
+      setShareState("error");
+    } finally {
+      setTimeout(() => setShareState("idle"), 1800);
+    }
+  };
+
+  return (
+    <div className="absolute bottom-3 right-3 flex flex-col gap-2 pointer-events-auto">
+      <ControlButton
+        onClick={toggleMic}
+        disabled={busy === "mic"}
+        active={!isMicrophoneEnabled}
+        label={isMicrophoneEnabled ? "Mute microphone" : "Unmute microphone"}
+        icon={isMicrophoneEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+      />
+      <ControlButton
+        onClick={toggleCamera}
+        disabled={busy === "camera"}
+        active={!isCameraEnabled}
+        label={isCameraEnabled ? "Turn off camera" : "Turn on camera"}
+        icon={
+          isCameraEnabled ? (
+            <VideoIcon className="h-4 w-4" />
+          ) : (
+            <VideoOff className="h-4 w-4" />
+          )
+        }
+      />
+      <ControlButton
+        onClick={share}
+        label={
+          shareState === "copied"
+            ? "Buyer link copied"
+            : shareState === "error"
+              ? "Couldn't copy"
+              : "Share buyer link"
+        }
+        icon={
+          shareState === "copied" ? (
+            <Check className="h-4 w-4" />
+          ) : (
+            <Share2 className="h-4 w-4" />
+          )
+        }
+        flash={shareState !== "idle"}
+      />
+    </div>
+  );
+}
+
+function ControlButton({
+  onClick,
+  disabled,
+  active,
+  label,
+  icon,
+  flash,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  /** When true, the button shows a "destructive/active" state (e.g. mic muted). */
+  active?: boolean;
+  label: string;
+  icon: React.ReactNode;
+  flash?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className={cn(
+        "p-2 rounded-full transition-colors text-white relative shadow-lg",
+        active
+          ? "bg-red-500 hover:bg-red-600"
+          : flash
+            ? "bg-green-500 hover:bg-green-600"
+            : "bg-black/60 hover:bg-black/80",
+        disabled && "opacity-60 cursor-not-allowed"
+      )}
+    >
+      {icon}
+    </button>
   );
 }
 
@@ -362,27 +520,16 @@ export function BroadcasterView({ streamId, token, title }: BroadcasterViewProps
                   onError={(err) => setLiveKitError(err.message)}
                 >
                   <BroadcasterVideo liveKitError={liveKitError} />
+                  {/* Real broadcaster controls — must live inside LiveKitRoom
+                      to access useLocalParticipant for mic/camera toggling. */}
+                  <BroadcasterControls buyerUrl={buyerUrl} />
                 </LiveKitRoom>
 
                 {/* Floating private/url chip */}
-                <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
+                <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none">
                   <span className="inline-flex items-center gap-1 bg-black/60 text-white text-[11px] font-medium px-2 py-1 rounded-full">
                     Private link
                   </span>
-                </div>
-
-                {/* Bottom action chips (placeholders for now) */}
-                <div className="absolute bottom-3 right-3 flex flex-col gap-2">
-                  {[Volume2, Share2, Pin].map((Icon, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      className="p-2 rounded-full bg-black/60 hover:bg-black/80 text-white"
-                      title="Coming soon"
-                    >
-                      <Icon className="h-4 w-4" />
-                    </button>
-                  ))}
                 </div>
 
                 {/* Reveal mode theater overlay (visible to seller too so they see what buyers see) */}

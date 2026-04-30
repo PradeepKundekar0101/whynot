@@ -28,7 +28,15 @@ const PRESET_AMOUNTS = [
   { label: "$250", cents: 25000 },
 ];
 
-function CheckoutForm({ onSuccess }: { onSuccess: () => void }) {
+function CheckoutForm({
+  onSuccess,
+  amountCents,
+  onBack,
+}: {
+  onSuccess: () => void;
+  amountCents: number;
+  onBack: () => void;
+}) {
   const stripe = useStripe();
   const elements = useElements();
   const [loading, setLoading] = useState(false);
@@ -55,20 +63,35 @@ function CheckoutForm({ onSuccess }: { onSuccess: () => void }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <PaymentElement />
-      {error && (
-        <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
-          {error}
-        </div>
-      )}
-      <button
-        type="submit"
-        disabled={!stripe || loading}
-        className="w-full h-10 rounded-lg bg-primary text-primary-foreground font-semibold text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
-      >
-        {loading ? "Processing..." : "Pay"}
-      </button>
+    // Two-zone layout: scrollable Stripe Elements at the top, sticky pay-bar at
+    // the bottom so the Pay button is always reachable no matter how tall the
+    // PaymentElement gets (Card + Cash App + Amazon Pay etc.).
+    <form onSubmit={handleSubmit} className="flex flex-col min-h-0 flex-1">
+      <div className="flex-1 overflow-y-auto -mx-4 px-4 pb-4">
+        <PaymentElement />
+        {error && (
+          <div className="mt-3 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+            {error}
+          </div>
+        )}
+      </div>
+      <div className="-mx-4 -mb-4 px-4 py-3 border-t border-border bg-popover flex items-center gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={onBack}
+          disabled={loading}
+          className="h-10 px-4 rounded-lg border border-border text-sm font-medium hover:bg-secondary disabled:opacity-50 transition-colors"
+        >
+          Back
+        </button>
+        <button
+          type="submit"
+          disabled={!stripe || loading}
+          className="flex-1 h-10 rounded-lg bg-primary text-primary-foreground font-semibold text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
+        >
+          {loading ? "Processing…" : `Pay $${(amountCents / 100).toFixed(2)}`}
+        </button>
+      </div>
     </form>
   );
 }
@@ -139,16 +162,21 @@ export function TopUpModal({ onSuccess, children }: TopUpModalProps) {
     }
   };
 
+  const handleBackToAmounts = () => {
+    setClientSecret(null);
+    setSelectedAmount(null);
+  };
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger render={children as React.ReactElement} />
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Add Funds</DialogTitle>
         </DialogHeader>
 
         {!clientSecret ? (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
             <div className="grid grid-cols-2 gap-2">
               {PRESET_AMOUNTS.map((amt) => (
                 <button
@@ -198,7 +226,11 @@ export function TopUpModal({ onSuccess, children }: TopUpModalProps) {
             stripe={stripePromise}
             options={{ clientSecret, appearance: { theme: "stripe" } }}
           >
-            <CheckoutForm onSuccess={handleSuccess} />
+            <CheckoutForm
+              onSuccess={handleSuccess}
+              onBack={handleBackToAmounts}
+              amountCents={selectedAmount ?? 0}
+            />
           </Elements>
         )}
       </DialogContent>

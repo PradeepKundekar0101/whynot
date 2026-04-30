@@ -11,12 +11,27 @@ import {
 import { Track, ConnectionState, RoomEvent } from "livekit-client";
 import { useEffect, useState } from "react";
 import "@livekit/components-styles";
+import { CameraOffPlaceholder } from "./CameraOffPlaceholder";
 
-function VideoDisplay({ serverUrl }: { serverUrl: string }) {
+export interface StreamSellerInfo {
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+function VideoDisplay({
+  serverUrl,
+  seller,
+}: {
+  serverUrl: string;
+  seller?: StreamSellerInfo;
+}) {
   const connectionState = useConnectionState();
   const room = useRoomContext();
   const tracks = useTracks([Track.Source.Camera], { onlySubscribed: true });
+  const audioTracks = useTracks([Track.Source.Microphone], { onlySubscribed: true });
   const videoTrackRef = tracks[0];
+  const audioTrackRef = audioTracks[0];
 
   // Track number of remote participants so we can distinguish "seller hasn't published yet"
   // from "we're not actually connected".
@@ -28,13 +43,17 @@ function VideoDisplay({ serverUrl }: { serverUrl: string }) {
       .on(RoomEvent.ParticipantConnected, update)
       .on(RoomEvent.ParticipantDisconnected, update)
       .on(RoomEvent.TrackSubscribed, update)
-      .on(RoomEvent.TrackUnsubscribed, update);
+      .on(RoomEvent.TrackUnsubscribed, update)
+      .on(RoomEvent.TrackMuted, update)
+      .on(RoomEvent.TrackUnmuted, update);
     return () => {
       room
         .off(RoomEvent.ParticipantConnected, update)
         .off(RoomEvent.ParticipantDisconnected, update)
         .off(RoomEvent.TrackSubscribed, update)
-        .off(RoomEvent.TrackUnsubscribed, update);
+        .off(RoomEvent.TrackUnsubscribed, update)
+        .off(RoomEvent.TrackMuted, update)
+        .off(RoomEvent.TrackUnmuted, update);
     };
   }, [room]);
 
@@ -84,10 +103,27 @@ function VideoDisplay({ serverUrl }: { serverUrl: string }) {
   }
 
   if (!videoTrackRef) {
+    // Two reasons we can land here:
+    //  1. Seller hasn't published any tracks yet (remoteCount === 0)
+    //  2. Seller is connected but turned their camera off — but they may still
+    //     be talking, so render the friendly avatar placeholder.
+    if (remoteCount === 0 || !seller) {
+      return (
+        <div className="flex items-center justify-center h-full bg-black text-white text-sm">
+          {remoteCount === 0
+            ? "Waiting for seller to start broadcasting..."
+            : "Waiting for video..."}
+        </div>
+      );
+    }
     return (
-      <div className="flex items-center justify-center h-full bg-black text-white text-sm">
-        {remoteCount === 0 ? "Waiting for seller to start broadcasting..." : "Waiting for video..."}
-      </div>
+      <CameraOffPlaceholder
+        variant="buyer"
+        displayName={seller.displayName}
+        username={seller.username}
+        avatarUrl={seller.avatarUrl}
+        micOn={!!audioTrackRef && !audioTrackRef.publication?.isMuted}
+      />
     );
   }
 
@@ -103,12 +139,15 @@ interface LiveStreamPlayerProps {
   token: string;
   serverUrl: string;
   onDisconnected?: () => void;
+  /** Used to render the camera-off placeholder when the seller pauses video. */
+  seller?: StreamSellerInfo;
 }
 
 export function LiveStreamPlayer({
   token,
   serverUrl,
   onDisconnected,
+  seller,
 }: LiveStreamPlayerProps) {
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
@@ -139,7 +178,7 @@ export function LiveStreamPlayer({
       }}
       className="w-full h-full"
     >
-      <VideoDisplay serverUrl={serverUrl} />
+      <VideoDisplay serverUrl={serverUrl} seller={seller} />
       {/* Plays remote audio (seller's mic) — without this the room is silent. */}
       <RoomAudioRenderer />
     </LiveKitRoom>

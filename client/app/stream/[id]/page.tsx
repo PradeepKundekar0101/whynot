@@ -265,6 +265,11 @@ export default function StreamWatchPage() {
                   token={token}
                   serverUrl={livekitUrl}
                   onDisconnected={() => setToken(null)}
+                  seller={{
+                    username: stream.seller.username,
+                    displayName: stream.seller.displayName,
+                    avatarUrl: stream.seller.avatarUrl,
+                  }}
                 />
               ) : (
                 <div className="flex items-center justify-center h-full text-white text-sm">
