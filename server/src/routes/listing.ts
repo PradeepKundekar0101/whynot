@@ -182,7 +182,7 @@ router.post(
   authenticate,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const result = await closeAuction(req.params.id);
+      const result = await closeAuction(req.params.id, req.user!.userId);
       emitToStream(result.listing.streamId, "listing:sold", {
         listingId: req.params.id,
         status: result.status,
@@ -194,6 +194,14 @@ router.post(
       }
       res.json(result);
     } catch (err: any) {
+      if (err.message === "NOT_AUTHORIZED") {
+        res.status(403).json({ error: { code: "NOT_AUTHORIZED", message: "Not your listing" } });
+        return;
+      }
+      if (err.message === "LISTING_NOT_AVAILABLE") {
+        res.status(400).json({ error: { code: "LISTING_NOT_AVAILABLE", message: "Listing not available" } });
+        return;
+      }
       console.error("Close auction error:", err);
       res
         .status(500)

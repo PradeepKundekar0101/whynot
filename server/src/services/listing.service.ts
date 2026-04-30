@@ -60,7 +60,7 @@ export async function placeBid(
   amount: number
 ) {
   const result = await prisma.$transaction(async (tx) => {
-    // Get listing
+    // Get listing (Serializable isolation prevents concurrent bid race conditions)
     const listing = await tx.listing.findUniqueOrThrow({
       where: { id: listingId },
     });
@@ -183,7 +183,7 @@ export async function placeBid(
       extended,
       bidder: { username: bidder.username, displayName: bidder.displayName },
     };
-  });
+  }, { isolationLevel: "Serializable" });
 
   return result;
 }
@@ -325,11 +325,19 @@ export async function randomizeSpots(listingId: string, sellerId: string) {
   };
 }
 
-export async function closeAuction(listingId: string) {
+export async function closeAuction(listingId: string, sellerId: string) {
   const result = await prisma.$transaction(async (tx) => {
     const listing = await tx.listing.findUniqueOrThrow({
       where: { id: listingId },
     });
+
+    // Verify seller owns this listing's stream
+    const stream = await tx.stream.findUniqueOrThrow({
+      where: { id: listing.streamId },
+    });
+    if (stream.sellerId !== sellerId) {
+      throw new Error("NOT_AUTHORIZED");
+    }
 
     if (listing.status !== "open" || listing.type !== "auction") {
       throw new Error("LISTING_NOT_AVAILABLE");
@@ -343,9 +351,7 @@ export async function closeAuction(listingId: string) {
       });
 
       // Credit seller (the bid hold already debited the winner)
-      const stream = await tx.stream.findUniqueOrThrow({
-        where: { id: listing.streamId },
-      });
+      // stream already fetched above for auth check
       const platformFee = Math.round(listing.currentBid * 0.05); // 5% fee
       const sellerAmount = listing.currentBid - platformFee;
 
@@ -386,7 +392,7 @@ export async function closeAuction(listingId: string) {
         amount: 0,
       };
     }
-  });
+  }, { isolationLevel: "Serializable" });
 
   return result;
 }
