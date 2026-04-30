@@ -6,6 +6,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { apiFetch } from "@/lib/api";
 import { Navbar } from "@/components/layout/Navbar";
 import { LiveStreamPlayer } from "@/components/stream/LiveStreamPlayer";
+import { ChatPanel } from "@/components/stream/ChatPanel";
 
 interface StreamData {
   id: string;
@@ -188,12 +189,9 @@ export default function StreamWatchPage() {
           </div>
         </main>
 
-        {/* Right panel — placeholder for chat (Phase 4) */}
-        <aside className="hidden lg:flex flex-col w-80 border-l border-border p-4">
-          <h3 className="text-sm font-semibold mb-4">Chat</h3>
-          <p className="text-sm text-muted-foreground">
-            Chat will be available soon.
-          </p>
+        {/* Right panel — Chat */}
+        <aside className="hidden lg:flex flex-col w-80 border-l border-border">
+          <ChatPanel streamId={streamId} />
         </aside>
       </div>
     </div>
