@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Component, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
@@ -41,6 +41,29 @@ const BUYER_TABS = [
   { id: "sold", label: "Sold" },
 ] as const;
 type BuyerTab = (typeof BUYER_TABS)[number]["id"];
+
+/**
+ * Isolates the LiveKit player so a runtime error inside the SDK (WebRTC,
+ * track parsing, etc.) doesn't crash the entire stream page.
+ */
+class PlayerErrorBoundary extends Component<
+  { children: ReactNode; fallback: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode; fallback: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: unknown) {
+    console.error("[stream player] crashed:", error);
+  }
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children;
+  }
+}
 
 export default function StreamWatchPage() {
   const params = useParams();
@@ -86,7 +109,6 @@ export default function StreamWatchPage() {
     walletBalance,
   } = useStreamBreaks(streamId, socket, user?.id);
 
-  // Fetch stream details
   useEffect(() => {
     const load = async () => {
       try {
@@ -106,6 +128,16 @@ export default function StreamWatchPage() {
     };
     void load();
   }, [streamId]);
+
+  // The seller can't watch their own stream as a buyer — LiveKit collisions
+  // and a near-instant renderer crash from token churn ensue. Bounce them to
+  // the broadcaster view, which is what they actually want.
+  useEffect(() => {
+    if (!user || !stream) return;
+    if (user.id === stream.seller.id) {
+      router.replace(`/seller/stream/${streamId}`);
+    }
+  }, [user, stream, router, streamId]);
 
   // Refresh user (for wallet balance) when server pushes wallet:balance_updated.
   useEffect(() => {
@@ -198,6 +230,21 @@ export default function StreamWatchPage() {
   }, [activeTab, breaks, search]);
 
   const activeSpotInfo = findActiveSpot(breaks);
+
+  // Memoize props passed to LiveStreamPlayer so identical-content re-renders
+  // don't show up as new prop references and cause LiveKitRoom to thrash.
+  const playerSeller = useMemo(
+    () =>
+      stream
+        ? {
+            username: stream.seller.username,
+            displayName: stream.seller.displayName,
+            avatarUrl: stream.seller.avatarUrl,
+          }
+        : null,
+    [stream?.seller.username, stream?.seller.displayName, stream?.seller.avatarUrl]
+  );
+  const handlePlayerDisconnected = useCallback(() => setToken(null), []);
 
   if (loading || authLoading) {
     return (
@@ -304,17 +351,28 @@ export default function StreamWatchPage() {
         <main className="flex-1 flex flex-col min-w-0 bg-neutral-950">
           <div className="flex-1 flex items-center justify-center p-3 min-h-0">
             <div className="relative h-full max-h-full aspect-[9/16] bg-black rounded-xl overflow-hidden w-full max-w-md">
-              {token ? (
-                <LiveStreamPlayer
-                  token={token}
-                  serverUrl={livekitUrl}
-                  onDisconnected={() => setToken(null)}
-                  seller={{
-                    username: stream.seller.username,
-                    displayName: stream.seller.displayName,
-                    avatarUrl: stream.seller.avatarUrl,
-                  }}
-                />
+              {token && playerSeller ? (
+                <PlayerErrorBoundary
+                  fallback={
+                    <div className="flex flex-col items-center justify-center h-full bg-black text-white text-sm px-6 text-center gap-2">
+                      <p className="font-medium">Something broke in the stream player.</p>
+                      <button
+                        type="button"
+                        onClick={() => setToken(null)}
+                        className="text-xs text-amber-300 underline"
+                      >
+                        Reload player
+                      </button>
+                    </div>
+                  }
+                >
+                  <LiveStreamPlayer
+                    token={token}
+                    serverUrl={livekitUrl}
+                    onDisconnected={handlePlayerDisconnected}
+                    seller={playerSeller}
+                  />
+                </PlayerErrorBoundary>
               ) : (
                 <div className="flex items-center justify-center h-full text-white text-sm">
                   {stream.status === "live"

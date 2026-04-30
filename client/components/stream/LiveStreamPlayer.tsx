@@ -10,7 +10,7 @@ import {
 } from "@livekit/components-react";
 import { useTrackMutedIndicator } from "@livekit/components-react/hooks";
 import { Track, ConnectionState, RoomEvent } from "livekit-client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import "@livekit/components-styles";
 import { CameraOffPlaceholder } from "./CameraOffPlaceholder";
 
@@ -179,6 +179,11 @@ export function LiveStreamPlayer({
 }: LiveStreamPlayerProps) {
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
+  const handleError = useCallback((err: Error) => {
+    console.error("LiveKit viewer error:", err);
+    setConnectionError(err.message);
+  }, []);
+
   if (connectionError) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 h-full bg-black text-red-400 text-sm px-6 text-center">
@@ -200,10 +205,7 @@ export function LiveStreamPlayer({
       video={false}
       audio={false}
       onDisconnected={onDisconnected}
-      onError={(err) => {
-        console.error("LiveKit viewer error:", err);
-        setConnectionError(err.message);
-      }}
+      onError={handleError}
       className="w-full h-full"
     >
       <VideoDisplay serverUrl={serverUrl} seller={seller} />
