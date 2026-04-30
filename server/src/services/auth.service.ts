@@ -11,10 +11,11 @@ export async function createUser(data: {
   displayName: string;
 }) {
   const passwordHash = await bcrypt.hash(data.password, SALT_ROUNDS);
+  const email = data.email.trim().toLowerCase();
 
   const user = await prisma.user.create({
     data: {
-      email: data.email,
+      email,
       username: data.username,
       passwordHash,
       displayName: data.displayName,
@@ -29,7 +30,10 @@ export async function createUser(data: {
 }
 
 export async function loginUser(email: string, password: string) {
-  const user = await prisma.user.findUnique({ where: { email } });
+  const normalized = email.trim();
+  const user = await prisma.user.findFirst({
+    where: { email: { equals: normalized, mode: "insensitive" } },
+  });
   if (!user) return null;
 
   const valid = await bcrypt.compare(password, user.passwordHash);
