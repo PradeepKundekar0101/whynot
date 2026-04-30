@@ -4,6 +4,8 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import Redis from "ioredis";
 import { verifyAccessToken } from "../lib/jwt";
 import { handleChatMessage } from "./chat";
+import { handleBidPlace } from "./auction";
+import { setIO } from "./emitter";
 import { JwtPayload } from "../types";
 import prisma from "../lib/prisma";
 import redis from "../lib/redis";
@@ -19,6 +21,8 @@ export function setupWebSocket(httpServer: HttpServer) {
       credentials: true,
     },
   });
+
+  setIO(io);
 
   // Redis adapter for horizontal scaling
   try {
@@ -91,6 +95,12 @@ export function setupWebSocket(httpServer: HttpServer) {
       if (!socket.user) return;
       if (!data.streamId || typeof data.streamId !== "string") return;
       await handleChatMessage(io, socket as AuthenticatedSocket, data.streamId, data.text);
+    });
+
+    // Bid placement
+    socket.on("bid:place", async (data: { listingId: string; amount: number }) => {
+      if (!socket.user) return;
+      await handleBidPlace(io, socket as AuthenticatedSocket, data);
     });
 
     // Disconnect cleanup

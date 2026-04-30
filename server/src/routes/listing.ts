@@ -9,6 +9,8 @@ import {
   getListingsForStream,
   closeAuction,
 } from "../services/listing.service";
+import { emitToStream } from "../websocket/emitter";
+import prisma from "../lib/prisma";
 
 const router = Router();
 
@@ -52,6 +54,7 @@ router.post(
         req.user!.userId,
         parsed.data
       );
+      emitToStream(listing.streamId, "listing:new", { listing });
       res.status(201).json({ listing });
     } catch (err: any) {
       if (err.message === "INVALID_STREAM") {
@@ -91,6 +94,13 @@ router.post(
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const result = await reserveSpot(req.params.id, req.user!.userId);
+      emitToStream(result.listing.streamId, "spot:purchased", {
+        listingId: req.params.id,
+        userId: req.user!.userId,
+        username: result.user.username,
+        spotsSold: result.listing.spotsSold,
+        totalSpots: result.listing.totalSpots,
+      });
       res.json(result);
     } catch (err: any) {
       const errorMap: Record<
@@ -140,6 +150,16 @@ router.post(
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const result = await randomizeSpots(req.params.id, req.user!.userId);
+      const listing = await prisma.listing.findUnique({ where: { id: req.params.id }, select: { streamId: true } });
+      if (listing) {
+        emitToStream(listing.streamId, "spot:assigned", {
+          listingId: req.params.id,
+          assignments: result.assignments,
+          seedHash: result.seedHash,
+          seed: result.seed,
+        });
+        emitToStream(listing.streamId, "confetti", {});
+      }
       res.json(result);
     } catch (err: any) {
       if (err.message === "NOT_AUTHORIZED") {
@@ -163,6 +183,15 @@ router.post(
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const result = await closeAuction(req.params.id);
+      emitToStream(result.listing.streamId, "listing:sold", {
+        listingId: req.params.id,
+        status: result.status,
+        winnerId: result.winnerId,
+        amount: result.amount,
+      });
+      if (result.status === "sold") {
+        emitToStream(result.listing.streamId, "confetti", {});
+      }
       res.json(result);
     } catch (err: any) {
       console.error("Close auction error:", err);
