@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
+import pinoHttp from "pino-http";
 import { createServer } from "http";
 import authRoutes from "./routes/auth";
 import walletRoutes from "./routes/wallet";
@@ -10,6 +11,7 @@ import streamRoutes from "./routes/stream";
 import chatRoutes from "./routes/chat";
 import listingRoutes from "./routes/listing";
 import { setupWebSocket } from "./websocket";
+import logger from "./lib/logger";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -20,6 +22,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(cookieParser());
+app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === "/api/health" } }));
 
 // Webhook route MUST be before express.json() — it needs raw body
 app.use("/api/wallet/webhook", express.raw({ type: "application/json" }), webhookRoutes);
@@ -37,7 +40,7 @@ app.use("/api/streams", chatRoutes);
 app.use("/api/listings", listingRoutes);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(err);
+  logger.error(err, "Unhandled error");
   res.status(500).json({
     error: { code: "INTERNAL_ERROR", message: "Something went wrong" },
   });
@@ -47,5 +50,5 @@ const httpServer = createServer(app);
 setupWebSocket(httpServer);
 
 httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  logger.info(`Server running on port ${PORT}`);
 });

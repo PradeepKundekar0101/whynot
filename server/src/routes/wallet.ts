@@ -7,6 +7,7 @@ import {
   getWalletBalance,
   getWalletTransactions,
 } from "../services/wallet.service";
+import logger from "../lib/logger";
 
 const router = Router();
 
@@ -20,7 +21,7 @@ router.get("/balance", authenticate, async (req: AuthenticatedRequest, res: Resp
     const balance = await getWalletBalance(req.user!.userId);
     res.json({ balance });
   } catch (err) {
-    console.error("Balance error:", err);
+    logger.error(err, "Balance error");
     res.status(500).json({
       error: { code: "INTERNAL_ERROR", message: "Something went wrong" },
     });
@@ -35,7 +36,7 @@ router.get("/transactions", authenticate, async (req: AuthenticatedRequest, res:
     const transactions = await getWalletTransactions(req.user!.userId, limit, offset);
     res.json({ transactions });
   } catch (err) {
-    console.error("Transactions error:", err);
+    logger.error(err, "Transactions error");
     res.status(500).json({
       error: { code: "INTERNAL_ERROR", message: "Something went wrong" },
     });
@@ -75,7 +76,7 @@ router.post("/topup", authenticate, async (req: AuthenticatedRequest, res: Respo
       });
       return;
     }
-    console.error("Topup error:", err);
+    logger.error(err, "Topup error");
     res.status(500).json({
       error: { code: "INTERNAL_ERROR", message: "Something went wrong" },
     });

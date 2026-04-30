@@ -9,6 +9,7 @@ import { setIO } from "./emitter";
 import { JwtPayload } from "../types";
 import prisma from "../lib/prisma";
 import redis from "../lib/redis";
+import logger from "../lib/logger";
 
 export interface AuthenticatedSocket extends Socket {
   user?: JwtPayload;
@@ -28,11 +29,11 @@ export function setupWebSocket(httpServer: HttpServer) {
   try {
     const pubClient = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
     const subClient = pubClient.duplicate();
-    pubClient.on("error", (err) => console.warn("Redis pub client error:", err.message));
-    subClient.on("error", (err) => console.warn("Redis sub client error:", err.message));
+    pubClient.on("error", (err) => logger.warn(err, "Redis pub client error"));
+    subClient.on("error", (err) => logger.warn(err, "Redis sub client error"));
     io.adapter(createAdapter(pubClient, subClient));
   } catch (err) {
-    console.warn("Redis adapter not available, using in-memory adapter:", err);
+    logger.warn(err, "Redis adapter not available, using in-memory adapter");
   }
 
   // JWT authentication middleware

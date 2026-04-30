@@ -1,11 +1,23 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
+import rateLimit from "express-rate-limit";
 import { createUser, loginUser, getUserById } from "../services/auth.service";
 import { signAccessToken, verifyRefreshToken } from "../lib/jwt";
 import { authenticate } from "../middleware/authenticate";
 import { AuthenticatedRequest } from "../types";
+import logger from "../lib/logger";
 
 const router = Router();
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts per window per IP
+  message: {
+    error: { code: "RATE_LIMITED", message: "Too many attempts. Please try again later." },
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 const signupSchema = z.object({
   email: z.string().email("Invalid email format"),
@@ -31,7 +43,7 @@ const REFRESH_COOKIE_OPTIONS = {
   path: "/",
 };
 
-router.post("/signup", async (req: Request, res: Response) => {
+router.post("/signup", authLimiter, async (req: Request, res: Response) => {
   const parsed = signupSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -76,14 +88,14 @@ router.post("/signup", async (req: Request, res: Response) => {
       });
       return;
     }
-    console.error("Signup error:", err);
+    logger.error(err, "Signup error");
     res.status(500).json({
       error: { code: "INTERNAL_ERROR", message: "Something went wrong" },
     });
   }
 });
 
-router.post("/login", async (req: Request, res: Response) => {
+router.post("/login", authLimiter, async (req: Request, res: Response) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -124,7 +136,7 @@ router.post("/login", async (req: Request, res: Response) => {
       accessToken: result.accessToken,
     });
   } catch (err) {
-    console.error("Login error:", err);
+    logger.error(err, "Login error");
     res.status(500).json({
       error: { code: "INTERNAL_ERROR", message: "Something went wrong" },
     });

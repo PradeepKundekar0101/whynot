@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import prisma from "../lib/prisma";
 import redis from "../lib/redis";
 import { roomService, createPublisherToken, createViewerToken } from "../lib/livekit";
+import logger from "../lib/logger";
 
 const LIVE_STREAMS_CACHE_KEY = "streams:live";
 const LIVE_STREAMS_CACHE_TTL = 5;
@@ -12,7 +13,7 @@ export async function createStream(sellerId: string, title: string, category: st
   try {
     await roomService.createRoom({ name: livekitRoomName });
   } catch (err) {
-    console.warn("LiveKit room creation failed (may not be configured):", err);
+    logger.warn(err, "LiveKit room creation failed (may not be configured)");
   }
 
   const stream = await prisma.stream.create({

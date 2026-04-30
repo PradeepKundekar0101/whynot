@@ -3,12 +3,13 @@ import { RateLimiterRedis } from "rate-limiter-flexible";
 import Redis from "ioredis";
 import { placeBid } from "../services/listing.service";
 import { AuthenticatedSocket } from "./index";
+import logger from "../lib/logger";
 
 let bidLimiter: RateLimiterRedis | null = null;
 
 try {
   const redisClient = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
-  redisClient.on("error", (err) => console.warn("Bid rate limiter Redis error:", err.message));
+  redisClient.on("error", (err) => logger.warn(err, "Bid rate limiter Redis error"));
   bidLimiter = new RateLimiterRedis({
     storeClient: redisClient,
     keyPrefix: "ratelimit:bid",
@@ -16,7 +17,7 @@ try {
     duration: 1,
   });
 } catch {
-  console.warn("Bid rate limiter not available");
+  logger.warn("Bid rate limiter not available");
 }
 
 export async function handleBidPlace(

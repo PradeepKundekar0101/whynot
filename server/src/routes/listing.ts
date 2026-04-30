@@ -11,6 +11,7 @@ import {
 } from "../services/listing.service";
 import { emitToStream } from "../websocket/emitter";
 import prisma from "../lib/prisma";
+import logger from "../lib/logger";
 
 const router = Router();
 
@@ -66,7 +67,7 @@ router.post(
         });
         return;
       }
-      console.error("Create listing error:", err);
+      logger.error(err, "Create listing error");
       res
         .status(500)
         .json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
@@ -80,7 +81,7 @@ router.get("/stream/:streamId", async (req, res) => {
     const listings = await getListingsForStream(req.params.streamId);
     res.json({ listings });
   } catch (err) {
-    console.error("Get listings error:", err);
+    logger.error(err, "Get listings error");
     res
       .status(500)
       .json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
@@ -135,7 +136,7 @@ router.post(
           .json({ error: { code: mapped.code, message: mapped.message } });
         return;
       }
-      console.error("Reserve spot error:", err);
+      logger.error(err, "Reserve spot error");
       res
         .status(500)
         .json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
@@ -168,7 +169,7 @@ router.post(
         });
         return;
       }
-      console.error("Randomize error:", err);
+      logger.error(err, "Randomize error");
       res
         .status(500)
         .json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
@@ -202,7 +203,7 @@ router.post(
         res.status(400).json({ error: { code: "LISTING_NOT_AVAILABLE", message: "Listing not available" } });
         return;
       }
-      console.error("Close auction error:", err);
+      logger.error(err, "Close auction error");
       res
         .status(500)
         .json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });

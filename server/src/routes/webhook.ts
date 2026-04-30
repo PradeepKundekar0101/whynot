@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import Stripe from "stripe";
 import stripe from "../lib/stripe";
 import { creditWallet } from "../services/wallet.service";
+import logger from "../lib/logger";
 
 const router = Router();
 
@@ -18,7 +19,7 @@ router.post("/", async (req: Request, res: Response) => {
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
   } catch (err: any) {
-    console.error("Webhook signature verification failed:", err.message);
+    logger.error(err, "Webhook signature verification failed");
     res.status(400).json({ error: "Invalid signature" });
     return;
   }
@@ -32,7 +33,7 @@ router.post("/", async (req: Request, res: Response) => {
       try {
         await creditWallet(userId, paymentIntent.amount, paymentIntent.id, event.id);
       } catch (err) {
-        console.error("Credit wallet error:", err);
+        logger.error(err, "Credit wallet error");
         res.status(500).json({ error: "Failed to credit wallet" });
         return;
       }

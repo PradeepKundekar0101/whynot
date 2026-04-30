@@ -3,13 +3,14 @@ import { RateLimiterRedis } from "rate-limiter-flexible";
 import Redis from "ioredis";
 import prisma from "../lib/prisma";
 import { AuthenticatedSocket } from "./index";
+import logger from "../lib/logger";
 
 // Rate limiter: 5 messages per 10 seconds per user
 let chatLimiter: RateLimiterRedis | null = null;
 
 try {
   const redisClient = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
-  redisClient.on("error", (err) => console.warn("Chat rate limiter Redis error:", err.message));
+  redisClient.on("error", (err) => logger.warn(err, "Chat rate limiter Redis error"));
   chatLimiter = new RateLimiterRedis({
     storeClient: redisClient,
     keyPrefix: "ratelimit:chat",
@@ -17,7 +18,7 @@ try {
     duration: 10,
   });
 } catch {
-  console.warn("Chat rate limiter not available (Redis not connected)");
+  logger.warn("Chat rate limiter not available (Redis not connected)");
 }
 
 export async function handleChatMessage(
@@ -76,7 +77,7 @@ export async function handleChatMessage(
       createdAt: message.createdAt.toISOString(),
     });
   } catch (err) {
-    console.error("Chat message error:", err);
+    logger.error(err, "Chat message error");
     socket.emit("chat:error", { message: "Failed to send message" });
   }
 }

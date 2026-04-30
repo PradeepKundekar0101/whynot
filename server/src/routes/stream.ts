@@ -10,6 +10,7 @@ import {
   getLiveStreams,
   getStreamById,
 } from "../services/stream.service";
+import logger from "../lib/logger";
 
 const router = Router();
 
@@ -33,7 +34,7 @@ router.post("/", authenticate, async (req: AuthenticatedRequest, res: Response) 
     const result = await createStream(req.user!.userId, parsed.data.title, parsed.data.category);
     res.status(201).json({ stream: result.stream, token: result.token });
   } catch (err) {
-    console.error("Create stream error:", err);
+    logger.error(err, "Create stream error");
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
   }
 });
@@ -45,7 +46,7 @@ router.get("/live", async (req, res) => {
     const streams = await getLiveStreams(category);
     res.json({ streams });
   } catch (err) {
-    console.error("Live streams error:", err);
+    logger.error(err, "Live streams error");
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
   }
 });
@@ -60,7 +61,7 @@ router.get("/:id", async (req, res) => {
       res.status(404).json({ error: { code: "NOT_FOUND", message: "Stream not found" } });
       return;
     }
-    console.error("Get stream error:", err);
+    logger.error(err, "Get stream error");
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
   }
 });
@@ -75,7 +76,7 @@ router.post("/:id/join", authenticate, async (req: AuthenticatedRequest, res: Re
       res.status(400).json({ error: { code: "STREAM_NOT_LIVE", message: "Stream is not live" } });
       return;
     }
-    console.error("Join stream error:", err);
+    logger.error(err, "Join stream error");
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
   }
 });
@@ -86,7 +87,7 @@ router.post("/:id/leave", authenticate, async (_req: AuthenticatedRequest, res: 
     await leaveStream(_req.params.id);
     res.json({ message: "Left stream" });
   } catch (err) {
-    console.error("Leave stream error:", err);
+    logger.error(err, "Leave stream error");
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
   }
 });
@@ -101,7 +102,7 @@ router.post("/:id/end", authenticate, async (req: AuthenticatedRequest, res: Res
       res.status(404).json({ error: { code: "NOT_FOUND", message: "Stream not found or not yours" } });
       return;
     }
-    console.error("End stream error:", err);
+    logger.error(err, "End stream error");
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
   }
 });

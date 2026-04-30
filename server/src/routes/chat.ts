@@ -1,5 +1,6 @@
 import { Router } from "express";
 import prisma from "../lib/prisma";
+import logger from "../lib/logger";
 
 const router = Router();
 
@@ -36,7 +37,7 @@ router.get("/:streamId/chat", async (req, res) => {
 
     res.json({ messages: enriched });
   } catch (err) {
-    console.error("Chat history error:", err);
+    logger.error(err, "Chat history error");
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
   }
 });
