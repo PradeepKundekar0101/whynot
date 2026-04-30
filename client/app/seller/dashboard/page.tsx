@@ -168,11 +168,12 @@ function ShowCard({
 }
 
 export default function SellerDashboard() {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, refreshUser } = useAuth();
   const router = useRouter();
   const [stats, setStats] = useState<SellerStats | null>(null);
   const [shows, setShows] = useState<Show[]>([]);
   const [showsLoading, setShowsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<"go-live" | "cancel" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -186,23 +187,60 @@ export default function SellerDashboard() {
   }, []);
 
   const loadShows = useCallback(async () => {
+    setShowsLoading(true);
+    setLoadError(null);
     try {
-      const [upcomingRes, statsRes] = await Promise.all([
-        apiFetch("/streams/upcoming"),
-        apiFetch("/streams/seller/stats"),
-      ]);
-      if (upcomingRes.ok) {
-        const data = await upcomingRes.json();
-        setShows(data.shows || []);
+      await refreshUser();
+
+      let upcomingRes: Response;
+      let statsRes: Response;
+      try {
+        [upcomingRes, statsRes] = await Promise.all([
+          apiFetch("/streams/upcoming"),
+          apiFetch("/streams/seller/stats"),
+        ]);
+      } catch (e) {
+        setShows([]);
+        setStats(null);
+        setLoadError(
+          e instanceof Error ? e.message : "Network error — check API URL / connection."
+        );
+        return;
       }
+
+      if (!upcomingRes.ok) {
+        let msg = `Could not load shows (HTTP ${upcomingRes.status}).`;
+        try {
+          const err = await upcomingRes.json();
+          if (err?.error?.message) msg = err.error.message;
+        } catch {
+          //
+        }
+        if (upcomingRes.status === 401) msg = "Session expired — please sign out and log in again.";
+        setShows([]);
+        setLoadError(msg);
+      } else {
+        const data = await upcomingRes.json();
+        const list = Array.isArray(data.shows) ? data.shows : [];
+        setShows(list);
+      }
+
       if (statsRes.ok) {
-        const data = await statsRes.json();
-        setStats(data);
+        setStats(await statsRes.json());
+      } else if (upcomingRes.ok) {
+        let msg = `Could not load stats (HTTP ${statsRes.status}).`;
+        try {
+          const err = await statsRes.json();
+          if (err?.error?.message) msg = err.error.message;
+        } catch {
+          //
+        }
+        setLoadError((prev) => (prev ? `${prev}\n${msg}` : msg));
       }
     } finally {
       setShowsLoading(false);
     }
-  }, []);
+  }, [refreshUser]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -215,7 +253,28 @@ export default function SellerDashboard() {
       return;
     }
     void loadShows();
+
+    const onVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") void loadShows();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    return () => {
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
   }, [user, isLoading, router, loadShows]);
+
+  useEffect(() => {
+    const handler = () => {
+      void loadShows();
+    };
+    if (typeof window === "undefined") return;
+    window.addEventListener("whatnot:seller-dashboard-refresh", handler);
+    return () => window.removeEventListener("whatnot:seller-dashboard-refresh", handler);
+  }, [loadShows]);
 
   const handleCancel = async (showId: string) => {
     if (!confirm("Cancel this scheduled show?")) return;
@@ -312,6 +371,19 @@ export default function SellerDashboard() {
           </div>
         </div>
 
+        {loadError && (
+          <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <span className="text-foreground">{loadError}</span>
+            <button
+              type="button"
+              onClick={() => void loadShows()}
+              className="shrink-0 px-4 py-2 rounded-lg bg-foreground text-background text-xs font-semibold hover:opacity-90 transition-opacity"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
         {actionError && (
           <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 mt-px shrink-0" />
@@ -325,6 +397,10 @@ export default function SellerDashboard() {
           {showsLoading ? (
             <div className="rounded-xl border border-border bg-white p-6 text-sm text-muted-foreground">
               Loading shows…
+            </div>
+          ) : shows.length === 0 && loadError ? (
+            <div className="rounded-xl border border-border bg-white p-8 text-center text-sm text-muted-foreground">
+              Shows could not be loaded. Use <strong className="text-foreground">Try again</strong> above.
             </div>
           ) : shows.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border bg-white p-8 text-center">

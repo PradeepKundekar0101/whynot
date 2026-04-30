@@ -154,6 +154,11 @@ export default function ScheduleShowPage() {
       } catch {}
 
       router.push("/seller/dashboard");
+      if (typeof window !== "undefined") {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("whatnot:seller-dashboard-refresh"));
+        }, 0);
+      }
     } catch {
       setError("Network error. Please try again.");
     } finally {

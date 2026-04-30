@@ -1,4 +1,25 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
+/**
+ * Normalize REST base URL: trim slashes; if URL has no path (e.g. http://host:3001),
+ * append /api because this server mounts REST under app.use("/api", ...).
+ */
+function normalizeRestApiBase(envValue: string | undefined): string {
+  const fallback = "http://localhost:3001/api";
+  const raw = (envValue || fallback).trim();
+  if (!raw) return fallback;
+  try {
+    const u = new URL(raw);
+    const stripped = u.pathname.replace(/\/+$/, "") || "/";
+    if (stripped === "/") {
+      u.pathname = "/api";
+    }
+    return u.toString().replace(/\/+$/, "");
+  } catch {
+    const t = raw.replace(/\/+$/, "");
+    return t.endsWith("/api") ? t : `${t}/api`;
+  }
+}
+
+export const API_BASE = normalizeRestApiBase(process.env.NEXT_PUBLIC_API_URL);
 
 /**
  * Origin for non-REST connections (Socket.IO, raw WebSockets).
@@ -29,14 +50,16 @@ export async function apiFetch(
     headers["Authorization"] = `Bearer ${accessToken}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  const base = API_BASE.replace(/\/+$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const res = await fetch(`${base}${normalizedPath}`, {
     ...options,
     headers,
     credentials: "include",
   });
 
   if (res.status === 401 && accessToken) {
-    const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
+    const refreshRes = await fetch(`${API_BASE.replace(/\/+$/, "")}/auth/refresh`, {
       method: "POST",
       credentials: "include",
     });
@@ -46,7 +69,7 @@ export async function apiFetch(
       accessToken = data.accessToken;
       headers["Authorization"] = `Bearer ${accessToken}`;
 
-      return fetch(`${API_BASE}${path}`, {
+      return fetch(`${base}${normalizedPath}`, {
         ...options,
         headers,
         credentials: "include",

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useEffect, useState, ReactNode } from "react";
-import { apiFetch, setAccessToken } from "./api";
+import { apiFetch, setAccessToken, API_BASE } from "./api";
 
 interface User {
   id: string;
@@ -38,10 +38,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const restore = async () => {
       try {
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api"}/auth/refresh`,
-          { method: "POST", credentials: "include" }
-        );
+        const res = await fetch(`${API_BASE}/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+        });
         if (res.ok) {
           const data = await res.json();
           setAccessToken(data.accessToken);
