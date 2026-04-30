@@ -58,9 +58,11 @@ function VideoDisplay({
   }, [room]);
 
   // Surface a hint if we sit in "Connecting" for too long — usually means LiveKit isn't reachable
-  // or the SDK never opened the WebSocket.
+  // or the SDK never opened the WebSocket. This synchronizes a derived UI flag
+  // with the LiveKit connection-state machine, which is exactly what an effect is for.
   const [slowConnect, setSlowConnect] = useState(false);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSlowConnect(false);
     if (connectionState !== ConnectionState.Connecting) return;
     const t = setTimeout(() => setSlowConnect(true), 15000);
