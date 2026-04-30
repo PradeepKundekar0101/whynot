@@ -244,44 +244,33 @@ export async function getDiscoverPast(limit = DISCOVER_FEED_LIMIT) {
  *  - totalSalesCents: sum of all completed listing sales (auctions won + spots reserved with status='paid')
  *  - itemsSold: count of listings where status='sold' or auctions ended with a winner
  */
+/**
+ * Aggregate seller-side stats for the dashboard.
+ *
+ * Sales are sourced from Orders (created when a break completes); itemsSold is
+ * the count of OrderItem rows. We exclude cancelled orders so refunds don't
+ * inflate revenue. totalShows counts every stream the seller has scheduled,
+ * gone live with, or ended (cancelled excluded).
+ */
 export async function getSellerStats(sellerId: string) {
-  const [streamCount, soldListings] = await Promise.all([
+  const [totalShows, salesAgg, itemsSold] = await Promise.all([
     prisma.stream.count({
       where: { sellerId, status: { in: ["scheduled", "live", "ended"] } },
     }),
-    prisma.listing.findMany({
-      where: {
-        stream: { sellerId },
-        status: { in: ["sold", "ended"] },
-      },
-      select: {
-        currentBid: true,
-        price: true,
-        pricePerSpot: true,
-        spotsSold: true,
-        type: true,
-        status: true,
-      },
+    prisma.order.aggregate({
+      where: { sellerId, status: { not: "cancelled" } },
+      _sum: { subtotalCents: true },
+    }),
+    prisma.orderItem.count({
+      where: { order: { sellerId, status: { not: "cancelled" } } },
     }),
   ]);
 
-  let totalSalesCents = 0;
-  let itemsSold = 0;
-
-  for (const l of soldListings) {
-    if (l.type === "auction" && l.status === "sold" && l.currentBid) {
-      totalSalesCents += l.currentBid;
-      itemsSold += 1;
-    } else if (l.type === "buy_now" && l.status === "sold" && l.price) {
-      totalSalesCents += l.price;
-      itemsSold += 1;
-    } else if (l.type === "break" && l.pricePerSpot && l.spotsSold) {
-      totalSalesCents += l.pricePerSpot * l.spotsSold;
-      itemsSold += l.spotsSold;
-    }
-  }
-
-  return { totalShows: streamCount, totalSalesCents, itemsSold };
+  return {
+    totalShows,
+    totalSalesCents: salesAgg._sum.subtotalCents ?? 0,
+    itemsSold,
+  };
 }
 
 const LIVE_WINDOW_MS = 15 * 60 * 1000;
