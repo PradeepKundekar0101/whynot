@@ -2,13 +2,17 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
-import { Search, Heart, MessageCircle, Bell, Gift, User, Settings, ShoppingBag, LogOut, Video } from "lucide-react";
+import { apiFetch } from "@/lib/api";
+import { Search, Heart, MessageCircle, Bell, Gift, User, Settings, ShoppingBag, LogOut, Video, TrendingUp } from "lucide-react";
 import { Wallet } from "lucide-react";
 
 export function Navbar() {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
+  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [enrolling, setEnrolling] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -20,6 +24,20 @@ export function Navbar() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  const handleBecomeSeller = async () => {
+    if (enrolling) return;
+    setEnrolling(true);
+    try {
+      const res = await apiFetch("/auth/enable-seller", { method: "POST" });
+      if (res.ok) {
+        await refreshUser();
+        router.push("/seller/dashboard");
+      }
+    } finally {
+      setEnrolling(false);
+    }
+  };
 
   return (
     <header className="sticky top-0 z-50 bg-white border-b border-border">
@@ -43,9 +61,23 @@ export function Navbar() {
         <div className="flex items-center gap-3">
           {user ? (
             <>
-              <button className="hidden lg:inline-flex px-4 py-1.5 text-sm font-semibold rounded-full bg-primary text-primary-foreground hover:bg-primary/90">
-                Become a Seller
-              </button>
+              {user.isSellerEnabled ? (
+                <Link
+                  href="/seller/dashboard"
+                  className="hidden lg:inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                >
+                  <Video className="h-4 w-4" />
+                  Seller Dashboard
+                </Link>
+              ) : (
+                <button
+                  onClick={handleBecomeSeller}
+                  disabled={enrolling}
+                  className="hidden lg:inline-flex px-4 py-1.5 text-sm font-semibold rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
+                >
+                  {enrolling ? "Enabling..." : "Become a Seller"}
+                </button>
+              )}
               <button className="p-2 rounded-full hover:bg-secondary"><Heart className="h-5 w-5" /></button>
               <button className="p-2 rounded-full hover:bg-secondary"><MessageCircle className="h-5 w-5" /></button>
               <button className="p-2 rounded-full hover:bg-secondary"><Bell className="h-5 w-5" /></button>
@@ -107,13 +139,22 @@ export function Navbar() {
                       <Wallet className="h-4 w-4" /> Wallet
                     </Link>
                     {user.isSellerEnabled && (
-                      <Link
-                        href="/seller/dashboard"
-                        onClick={() => setMenuOpen(false)}
-                        className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-secondary transition-colors"
-                      >
-                        <Video className="h-4 w-4" /> Seller Dashboard
-                      </Link>
+                      <>
+                        <Link
+                          href="/seller/dashboard"
+                          onClick={() => setMenuOpen(false)}
+                          className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-secondary transition-colors"
+                        >
+                          <Video className="h-4 w-4" /> Seller Dashboard
+                        </Link>
+                        <Link
+                          href="/seller/earnings"
+                          onClick={() => setMenuOpen(false)}
+                          className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-secondary transition-colors"
+                        >
+                          <TrendingUp className="h-4 w-4" /> Earnings
+                        </Link>
+                      </>
                     )}
                     <div className="border-t border-border mt-1">
                       <button

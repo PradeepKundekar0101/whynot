@@ -4,17 +4,19 @@ import logger from "../lib/logger";
 
 const router = Router();
 
-// GET /api/streams/:streamId/chat — get recent chat messages
+// GET /api/streams/:streamId/chat — recent unified chat feed (user messages + system events)
 router.get("/:streamId/chat", async (req, res) => {
   try {
     const messages = await prisma.chatMessage.findMany({
       where: { streamId: req.params.streamId },
       orderBy: { createdAt: "desc" },
-      take: 50,
+      take: 100,
     });
 
-    // Fetch user info for each unique userId
-    const userIds = [...new Set(messages.map((m) => m.userId))];
+    // Hydrate user info for the message authors.
+    const userIds = [
+      ...new Set(messages.map((m) => m.userId).filter((id): id is string => !!id)),
+    ];
     const users = await prisma.user.findMany({
       where: { id: { in: userIds } },
       select: { id: true, username: true, displayName: true, avatarUrl: true },
@@ -22,14 +24,25 @@ router.get("/:streamId/chat", async (req, res) => {
     const userMap = new Map(users.map((u) => [u.id, u]));
 
     const enriched = messages.reverse().map((m) => {
-      const user = userMap.get(m.userId);
+      if (m.type === "system") {
+        return {
+          id: m.id,
+          type: "system" as const,
+          streamId: m.streamId,
+          eventType: m.eventType,
+          eventData: m.eventData,
+          createdAt: m.createdAt.toISOString(),
+        };
+      }
+      const user = m.userId ? userMap.get(m.userId) : null;
       return {
         id: m.id,
+        type: "user" as const,
         streamId: m.streamId,
         userId: m.userId,
         username: user?.username || "unknown",
         displayName: user?.displayName || "Unknown",
-        avatarUrl: user?.avatarUrl,
+        avatarUrl: user?.avatarUrl ?? null,
         text: m.text,
         createdAt: m.createdAt.toISOString(),
       };

@@ -4,18 +4,19 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import Redis from "ioredis";
 import { verifyAccessToken } from "../lib/jwt";
 import { handleChatMessage } from "./chat";
-import { handleBidPlace } from "./auction";
+import { registerBreakHandlers } from "./break";
 import { setIO } from "./emitter";
 import { JwtPayload } from "../types";
 import prisma from "../lib/prisma";
-import redis from "../lib/redis";
+import redis, { REDIS_URL } from "../lib/redis";
 import logger from "../lib/logger";
+import { emitSystemEvent } from "../services/chat-events.service";
 
 export interface AuthenticatedSocket extends Socket {
   user?: JwtPayload;
 }
 
-export function setupWebSocket(httpServer: HttpServer) {
+export async function setupWebSocket(httpServer: HttpServer) {
   const io = new Server(httpServer, {
     cors: {
       origin: process.env.CLIENT_URL || "http://localhost:3000",
@@ -25,12 +26,13 @@ export function setupWebSocket(httpServer: HttpServer) {
 
   setIO(io);
 
-  // Redis adapter for horizontal scaling
+  // Redis adapter for horizontal scaling (after connectRedis() in bootstrap)
   try {
-    const pubClient = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
-    const subClient = pubClient.duplicate();
+    const pubClient = new Redis(REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: null });
+    const subClient = pubClient.duplicate({ lazyConnect: true });
     pubClient.on("error", (err) => logger.warn(err, "Redis pub client error"));
     subClient.on("error", (err) => logger.warn(err, "Redis sub client error"));
+    await Promise.all([pubClient.connect(), subClient.connect()]);
     io.adapter(createAdapter(pubClient, subClient));
   } catch (err) {
     logger.warn(err, "Redis adapter not available, using in-memory adapter");
@@ -61,6 +63,7 @@ export function setupWebSocket(httpServer: HttpServer) {
           socket.emit("chat:error", { message: "Stream not available" });
           return;
         }
+        const alreadyJoined = socket.rooms.has(`stream:${streamId}`);
         socket.join(`stream:${streamId}`);
         (socket as any).streamId = streamId;
 
@@ -70,6 +73,26 @@ export function setupWebSocket(httpServer: HttpServer) {
           streamId,
           count: count ? parseInt(count) : stream.viewerCount,
         });
+
+        // Fire a system "joined" event the first time this socket joins the room.
+        // Throttled to collapse mass joins into "N viewers joined".
+        if (!alreadyJoined && socket.user && stream.sellerId !== socket.user.userId) {
+          try {
+            const user = await prisma.user.findUnique({
+              where: { id: socket.user.userId },
+              select: { username: true },
+            });
+            if (user) {
+              void emitSystemEvent(streamId, {
+                eventType: "user_joined",
+                userId: socket.user.userId,
+                username: user.username,
+              });
+            }
+          } catch {
+            // best-effort — don't block the join
+          }
+        }
       } catch {
         // Stream lookup failed — still allow join for resilience
         socket.join(`stream:${streamId}`);
@@ -98,11 +121,8 @@ export function setupWebSocket(httpServer: HttpServer) {
       await handleChatMessage(io, socket as AuthenticatedSocket, data.streamId, data.text);
     });
 
-    // Bid placement
-    socket.on("bid:place", async (data: { listingId: string; amount: number }) => {
-      if (!socket.user) return;
-      await handleBidPlace(io, socket as AuthenticatedSocket, data);
-    });
+    // Break/spot bidding + seller controls (uses ack pattern)
+    registerBreakHandlers(io, socket);
 
     // Disconnect cleanup
     socket.on("disconnect", () => {

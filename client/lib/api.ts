@@ -1,5 +1,11 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
+/**
+ * Origin for non-REST connections (Socket.IO, raw WebSockets).
+ * Socket.IO treats a trailing path segment as a namespace, so strip /api off the REST base.
+ */
+export const API_ORIGIN = API_BASE.replace(/\/api\/?$/, "");
+
 let accessToken: string | null = null;
 
 export function setAccessToken(token: string | null) {

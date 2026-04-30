@@ -18,81 +18,348 @@ model User {
   sellerRating     Float    @default(5.0)
   walletBalance    Int      @default(0)
   stripeCustomerId String?
+
+  // Seller earnings (separate from buyer wallet).
+  // earningsBalanceCents = available for payout.
+  // pendingEarningsCents = held in platform escrow during the buyer-protection window.
+  earningsBalanceCents       Int      @default(0)
+  pendingEarningsCents       Int      @default(0)
+  totalLifetimeEarningsCents Int      @default(0)
+  stripeAccountId            String?
+  payoutMethodSetupAt        DateTime?
+
   createdAt        DateTime @default(now())
 
   streamsHosted    Stream[]
-  bidsPlaced       Bid[]
-  spotsPurchased   SpotReservation[]
   walletTxns       WalletTransaction[]
   followers        Follow[] @relation("Followed")
   following        Follow[] @relation("Follower")
+  addresses        Address[]
+  walletHolds      WalletHold[]
+  spotsWon         Spot[]   @relation("SpotWinner")
+  spotsHighBidder  Spot[]   @relation("SpotHighBidder")
+  spotBids         SpotBid[]
+  ordersBought     Order[]  @relation("OrderBuyer")
+  ordersSold       Order[]  @relation("OrderSeller")
+  chatMessages     ChatMessage[]
+  earningsTxns     EarningsTransaction[]
+  payouts          Payout[]
 }
 
 model Stream {
-  id              String    @id @default(uuid())
-  sellerId        String
-  seller          User      @relation(fields: [sellerId], references: [id])
-  title           String
-  thumbnailUrl    String?
-  category        String
-  status          String
-  livekitRoomName String    @unique
-  viewerCount     Int       @default(0)
-  startedAt       DateTime?
-  endedAt         DateTime?
-  createdAt       DateTime  @default(now())
+  id                       String    @id @default(uuid())
+  sellerId                 String
+  seller                   User      @relation(fields: [sellerId], references: [id])
 
-  listings        Listing[]
-  chatMessages    ChatMessage[]
+  title                    String
+  description              String?
+  thumbnailUrl             String?
+  videoPreviewUrl          String?
+
+  category                 String
+  primaryCategory          String?
+  primarySubcategory       String?
+  primarySellingFormat     String    @default("breaks")
+  tags                     String[]  @default([])
+
+  status                   String
+
+  scheduledStartAt         DateTime?
+  scheduledEndAt           DateTime?
+  repeatRule               String?
+  parentSeriesId           String?
+
+  livekitRoomName          String    @unique
+  startedAt                DateTime?
+  endedAt                  DateTime?
+  viewerCount              Int       @default(0)
+
+  freePickupEnabled        Boolean   @default(false)
+  pickupAddressId          String?
+  pickupInstructions       String?
+  domesticShippingFee      Int?
+  combinedShippingEnabled  Boolean   @default(true)
+
+  isAdultContent           Boolean   @default(false)
+  allowChatReplays         Boolean   @default(true)
+  recordingEnabled         Boolean   @default(false)
+  notifyFollowers          Boolean   @default(true)
+
+  moderatorIds             String[]  @default([])
+  boostEnabled             Boolean   @default(false)
+
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @default(now()) @updatedAt
+
+  listings                 Listing[]
+  chatMessages             ChatMessage[]
+  orders                   Order[]
+
+  @@index([status, scheduledStartAt])
+  @@index([sellerId, status])
+  @@index([primaryCategory, status])
 }
 
+model Address {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  fullName    String
+  line1       String
+  line2       String?
+  city        String
+  state       String
+  postalCode  String
+  country     String   @default("US")
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// A "break" listing inside a Stream. Always type='break'.
+/// Each listing contains many Spots, which is where the actual bidding/buying happens.
 model Listing {
-  id            String    @id @default(uuid())
-  streamId      String
-  stream        Stream    @relation(fields: [streamId], references: [id])
-  type          String
-  title         String
-  description   String?
-  imageUrl      String?
-  startingBid   Int?
-  currentBid    Int?
-  bidIncrement  Int?
-  highBidderId  String?
-  endsAt        DateTime?
-  totalSpots    Int?
-  spotsSold     Int?      @default(0)
-  pricePerSpot  Int?
-  price         Int?
-  inventory     Int?
-  status        String
-  createdAt     DateTime  @default(now())
+  id               String   @id @default(uuid())
+  streamId         String
+  stream           Stream   @relation(fields: [streamId], references: [id])
 
-  bids          Bid[]
-  reservations  SpotReservation[]
+  type             String   @default("break")
+  breakName        String
+  breakDescription String?
+  sellingMode      String   // "auction" | "buy_it_now"
+  breakFormat      String   // "pick_your" | "random"
+  spotPreset       String?  // "nfl_teams" | "nba_teams" | "custom" | null
+  shippingProfile  String   @default("4-7oz")
+
+  // Lifecycle: "filling" | "breaking" | "randomizing" | "revealing" | "completed" | "cancelled"
+  status                    String
+  startedAt                 DateTime?
+  randomizationCompletedAt  DateTime?
+  revealStartedAt           DateTime?
+  completedAt               DateTime?
+
+  /// The spot that's currently in the seller's reveal "spotlight" (theater mode).
+  /// Null when no spot is being revealed; only one spot can be revealing at a time.
+  currentRevealingSpotId    String?
+
+  autoRandomize    Boolean  @default(true)
+  quickSpin        Boolean  @default(true)
+
+  createdAt        DateTime @default(now())
+
+  spots            Spot[]
+  orders           Order[]
+
+  @@index([streamId, status])
 }
 
-model Bid {
+/// A single biddable/buyable unit inside a break.
+/// Pick-your: spotName is the team (e.g. "Tennessee Titans") and assignedName mirrors it.
+/// Random: spotName is "Spot #N" and assignedName is filled in by the spin after auction ends.
+model Spot {
+  id              String   @id @default(uuid())
+  listingId       String
+  listing         Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  spotNumber      Int
+  spotName        String
+  description     String?
+  startingPrice   Int      // cents
+
+  assignedName    String?
+
+  // Auction state
+  auctionStatus   String   @default("pending") // "pending" | "active" | "ended" | "skipped"
+  auctionStartedAt DateTime?
+  auctionEndsAt   DateTime?
+  startingBid     Int?
+  currentBid      Int?
+  bidCount        Int      @default(0)
+  highBidderId    String?
+  highBidder      User?    @relation("SpotHighBidder", fields: [highBidderId], references: [id])
+
+  // Auction settings (set when seller starts the auction)
+  suddenDeath     Boolean  @default(false)
+  counterBidTime  Int      @default(10)
+  initialDuration Int      @default(30)
+
+  // Winner state
+  winnerId        String?
+  winner          User?    @relation("SpotWinner", fields: [winnerId], references: [id])
+  soldPrice       Int?
+  soldAt          DateTime?
+
+  spinPlayedAt    DateTime?
+
+  // Reveal state — separate from auction state. After a spot is sold (auction
+  // won or buy-it-now claimed), it enters the reveal queue.
+  // "pending"   — sold, awaiting reveal
+  // "revealing" — currently in the seller's spotlight
+  // "revealed"  — seller has confirmed what was inside
+  // "skipped"   — seller postponed; will circle back
+  revealStatus    String   @default("pending")
+  revealText      String?
+  revealedAt      DateTime?
+  revealOrder     Int?
+  isPinned        Boolean  @default(false)
+
+  createdAt       DateTime @default(now())
+
+  bids            SpotBid[]
+  walletHolds     WalletHold[]
+  orderItem       OrderItem?
+
+  @@index([listingId, spotNumber])
+  @@index([auctionStatus, auctionEndsAt])
+  @@index([listingId, revealStatus])
+}
+
+/// An order is created when a break completes. One Order per buyer per break,
+/// consolidating every spot they won into OrderItem children.
+model Order {
+  id               String   @id @default(uuid())
+  buyerId          String
+  buyer            User     @relation("OrderBuyer", fields: [buyerId], references: [id])
+  sellerId         String
+  seller           User     @relation("OrderSeller", fields: [sellerId], references: [id])
+  listingId        String
+  listing          Listing  @relation(fields: [listingId], references: [id])
+  streamId         String
+  stream           Stream   @relation(fields: [streamId], references: [id])
+
+  subtotalCents    Int
+  shippingCents    Int      @default(0)
+  taxCents         Int      @default(0)
+  totalCents       Int
+
+  status           String   @default("pending_shipment") // "pending_shipment" | "shipped" | "delivered" | "completed" | "cancelled"
+  shippingProfile  String?
+  trackingNumber   String?
+  shippedAt        DateTime?
+  deliveredAt      DateTime?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
+
+  items            OrderItem[]
+  escrow           PlatformEscrow?
+
+  @@unique([listingId, buyerId])
+  @@index([buyerId, status])
+  @@index([sellerId, status])
+  @@index([streamId])
+}
+
+/// One row per spot inside an Order.
+model OrderItem {
+  id           String   @id @default(uuid())
+  orderId      String
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  spotId       String   @unique
+  spot         Spot     @relation(fields: [spotId], references: [id])
+  spotName     String
+  description  String?  // typically the revealText, falls back to "Spot #N"
+  priceCents   Int
+  createdAt    DateTime @default(now())
+
+  @@index([orderId])
+}
+
+/// Funds-in-escrow record. Created when an Order is created. Released to the
+/// seller's earningsBalance after `releaseAt` by the escrow worker.
+model PlatformEscrow {
+  id                  String   @id @default(uuid())
+  orderId             String   @unique
+  order               Order    @relation(fields: [orderId], references: [id])
+
+  amountCents         Int
+  buyerId             String
+  sellerId            String
+
+  status              String   // "held" | "released" | "refunded" | "disputed"
+
+  heldAt              DateTime @default(now())
+  releaseAt           DateTime
+  releasedAt          DateTime?
+  refundedAt          DateTime?
+
+  platformFeeCents    Int
+  sellerEarningsCents Int
+
+  @@index([status, releaseAt])
+  @@index([sellerId, status])
+}
+
+/// Audit log for every change to a seller's earnings balance.
+model EarningsTransaction {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+
+  type         String   // "sale_pending" | "sale_released" | "refund" | "payout_requested" | "payout_completed" | "payout_failed"
+  amountCents  Int      // signed (negative for payouts/refunds)
+  pendingBalanceAfter   Int
+  availableBalanceAfter Int
+
+  orderId      String?
+  description  String
+  metadata     Json?
+
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// A seller's request to withdraw earnings to their bank.
+model Payout {
+  id               String   @id @default(uuid())
+  sellerId         String
+  seller           User     @relation(fields: [sellerId], references: [id])
+
+  amountCents      Int
+  status           String   // "requested" | "processing" | "paid" | "failed"
+
+  stripeTransferId String?
+  failedReason    String?
+
+  requestedAt      DateTime @default(now())
+  processedAt      DateTime?
+
+  @@index([sellerId, status])
+  @@index([status, requestedAt])
+}
+
+model SpotBid {
   id        String   @id @default(uuid())
-  listingId String
-  listing   Listing  @relation(fields: [listingId], references: [id])
+  spotId    String
+  spot      Spot     @relation(fields: [spotId], references: [id], onDelete: Cascade)
   bidderId  String
   bidder    User     @relation(fields: [bidderId], references: [id])
-  amount    Int
+  amount    Int      // cents
   createdAt DateTime @default(now())
+
+  @@index([spotId, createdAt])
 }
 
-model SpotReservation {
-  id         String   @id @default(uuid())
-  listingId  String
-  listing    Listing  @relation(fields: [listingId], references: [id])
-  userId     String
-  user       User     @relation(fields: [userId], references: [id])
-  status     String
-  spotNumber Int?
-  heldUntil  DateTime
-  createdAt  DateTime @default(now())
+/// Lock against a user's wallet balance while their bid is the high bid.
+/// Active holds reduce the user's available balance for subsequent bids.
+/// Released when outbid or the auction ends without them winning.
+/// Captured (turned into a real wallet debit + WalletTransaction) when they win.
+model WalletHold {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id])
+  amountCents  Int
+  reason       String    // "spot_bid" | "spot_purchase"
+  spotId       String?
+  spot         Spot?     @relation(fields: [spotId], references: [id], onDelete: SetNull)
+  status       String    // "active" | "released" | "captured"
+  createdAt    DateTime  @default(now())
+  releasedAt   DateTime?
 
-  @@unique([listingId, userId, status])
+  @@index([userId, status])
+  @@index([spotId])
 }
 
 model WalletTransaction {
@@ -108,13 +375,27 @@ model WalletTransaction {
   createdAt             DateTime @default(now())
 }
 
+/// Hybrid chat feed: every entry is either a user-typed message OR a system event
+/// (sale, reveal, follow, etc.) so the activity feel stays alive even when chat is quiet.
 model ChatMessage {
-  id        String   @id @default(uuid())
-  streamId  String
-  stream    Stream   @relation(fields: [streamId], references: [id])
-  userId    String
-  text      String
-  createdAt DateTime @default(now())
+  id          String   @id @default(uuid())
+  streamId    String
+  stream      Stream   @relation(fields: [streamId], references: [id])
+
+  type        String   @default("user") // "user" | "system"
+
+  // User messages
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  text        String?
+
+  // System events
+  eventType   String?  // "user_joined" | "spot_won" | "reveal" | etc.
+  eventData   Json?
+
+  createdAt   DateTime @default(now())
+
+  @@index([streamId, createdAt])
 }
 
 model Follow {

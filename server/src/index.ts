@@ -9,9 +9,12 @@ import walletRoutes from "./routes/wallet";
 import webhookRoutes from "./routes/webhook";
 import streamRoutes from "./routes/stream";
 import chatRoutes from "./routes/chat";
-import listingRoutes from "./routes/listing";
+import breakRoutes from "./routes/break";
+import earningsRoutes from "./routes/earnings";
+import orderRoutes from "./routes/order";
 import { setupWebSocket } from "./websocket";
 import logger from "./lib/logger";
+import { connectRedis } from "./lib/redis";
 import { startWorkers } from "./workers";
 
 const app = express();
@@ -38,7 +41,9 @@ app.use("/api/auth", authRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/streams", streamRoutes);
 app.use("/api/streams", chatRoutes);
-app.use("/api/listings", listingRoutes);
+app.use("/api/breaks", breakRoutes);
+app.use("/api/seller", earningsRoutes);
+app.use("/api/orders", orderRoutes);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   logger.error(err, "Unhandled error");
@@ -48,9 +53,27 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 const httpServer = createServer(app);
-setupWebSocket(httpServer);
 
-httpServer.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
-  startWorkers().catch((err) => logger.warn(err, "Failed to start workers"));
+async function bootstrap() {
+  try {
+    await connectRedis();
+  } catch (err) {
+    logger.fatal(
+      err,
+      `Redis is not reachable at ${process.env.REDIS_URL || "redis://localhost:6379"}. From the repo root run: docker compose up -d redis`
+    );
+    process.exit(1);
+  }
+
+  await setupWebSocket(httpServer);
+
+  httpServer.listen(PORT, () => {
+    logger.info(`Server running on port ${PORT}`);
+    startWorkers().catch((e) => logger.warn(e, "Failed to start workers"));
+  });
+}
+
+bootstrap().catch((err) => {
+  logger.fatal(err, "Server failed to start");
+  process.exit(1);
 });

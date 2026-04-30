@@ -5,6 +5,7 @@ import { createUser, loginUser, getUserById } from "../services/auth.service";
 import { signAccessToken, verifyRefreshToken } from "../lib/jwt";
 import { authenticate } from "../middleware/authenticate";
 import { AuthenticatedRequest } from "../types";
+import prisma from "../lib/prisma";
 import logger from "../lib/logger";
 
 const router = Router();
@@ -185,5 +186,34 @@ router.post("/logout", (_req: Request, res: Response) => {
   res.clearCookie("refreshToken", { path: "/" });
   res.json({ message: "Logged out" });
 });
+
+// POST /api/auth/enable-seller — flip the seller flag for the current user
+router.post(
+  "/enable-seller",
+  authenticate,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = await prisma.user.update({
+        where: { id: req.user!.userId },
+        data: { isSellerEnabled: true },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          displayName: true,
+          avatarUrl: true,
+          bio: true,
+          isSellerEnabled: true,
+          walletBalance: true,
+          createdAt: true,
+        },
+      });
+      res.json({ user });
+    } catch (err) {
+      logger.error(err, "Enable seller error");
+      res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
+    }
+  }
+);
 
 export default router;

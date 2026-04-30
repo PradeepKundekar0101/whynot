@@ -130,3 +130,38 @@ export async function getStreamById(streamId: string) {
     },
   });
 }
+
+/**
+ * Find the caller's currently-live stream (if any) and mint a fresh publisher token for it.
+ * Used by the seller dashboard to resume a stream after a page reload without re-creating it.
+ */
+export async function resumeOwnStream(sellerId: string) {
+  const stream = await prisma.stream.findFirst({
+    where: { sellerId, status: "live" },
+    orderBy: { startedAt: "desc" },
+    include: { seller: { select: { id: true, username: true, displayName: true, avatarUrl: true } } },
+  });
+
+  if (!stream) return null;
+
+  const token = await createPublisherToken(stream.livekitRoomName, sellerId, stream.seller.displayName);
+  return { stream, token };
+}
+
+/**
+ * Mint a fresh publisher token for a specific stream the caller owns.
+ * Used by the broadcaster page so a hard reload of /seller/stream/:id can rejoin.
+ */
+export async function getBroadcasterToken(streamId: string, sellerId: string) {
+  const stream = await prisma.stream.findUnique({
+    where: { id: streamId },
+    include: { seller: { select: { id: true, username: true, displayName: true, avatarUrl: true } } },
+  });
+
+  if (!stream) throw new Error("STREAM_NOT_FOUND");
+  if (stream.sellerId !== sellerId) throw new Error("NOT_AUTHORIZED");
+  if (stream.status !== "live") throw new Error("STREAM_NOT_LIVE");
+
+  const token = await createPublisherToken(stream.livekitRoomName, sellerId, stream.seller.displayName);
+  return { stream, token };
+}

@@ -9,7 +9,10 @@ import logger from "../lib/logger";
 let chatLimiter: RateLimiterRedis | null = null;
 
 try {
-  const redisClient = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
+  const redisClient = new Redis(process.env.REDIS_URL || "redis://localhost:6379", {
+    lazyConnect: true,
+    maxRetriesPerRequest: null,
+  });
   redisClient.on("error", (err) => logger.warn(err, "Chat rate limiter Redis error"));
   chatLimiter = new RateLimiterRedis({
     storeClient: redisClient,
@@ -54,6 +57,7 @@ export async function handleChatMessage(
     const message = await prisma.chatMessage.create({
       data: {
         streamId,
+        type: "user",
         userId: socket.user.userId,
         text: trimmed,
       },
@@ -68,6 +72,7 @@ export async function handleChatMessage(
     // Broadcast to everyone in the stream room
     io.to(`stream:${streamId}`).emit("chat:message", {
       id: message.id,
+      type: "user",
       streamId,
       userId: socket.user.userId,
       username: user?.username || "unknown",
