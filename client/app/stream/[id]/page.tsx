@@ -114,9 +114,14 @@ export default function StreamWatchPage() {
     }
   }, [walletBalance, refreshUser]);
 
-  // Join stream when user + stream loaded (presence is idempotent via viewerSessionId)
+  // Join stream when user + stream loaded (presence is idempotent via viewerSessionId).
+  // Important: depend on stable scalars (user.id, stream.id+status), NOT the `user`/`stream`
+  // object references — every wallet:balance_updated event swaps `user` for a new
+  // object reference, which would otherwise unmount LiveKit and re-issue /join.
+  const userIdForJoin = user?.id ?? null;
+  const streamStatusForJoin = stream?.status ?? null;
   useEffect(() => {
-    if (!user || !stream || stream.status !== "live" || viewerSessionId == null) return;
+    if (!userIdForJoin || streamStatusForJoin !== "live" || viewerSessionId == null) return;
 
     const sidStream = streamId;
     const sid = viewerSessionId;
@@ -142,7 +147,7 @@ export default function StreamWatchPage() {
         body: JSON.stringify({ viewerSessionId: sid }),
       }).catch(() => {});
     };
-  }, [user, stream, streamId, viewerSessionId]);
+  }, [userIdForJoin, streamStatusForJoin, streamId, viewerSessionId]);
 
   // Socket — wait for auth bootstrap so refresh has populated in-memory JWT.
   useEffect(() => {
@@ -151,11 +156,15 @@ export default function StreamWatchPage() {
     const accessToken = getAccessToken();
     if (!accessToken || !stream) return;
 
-    const s = io(API_ORIGIN, {
-      auth: { token: accessToken },
-      transports: ["websocket", "polling"],
-    });
+    // Use socket.io defaults (polling first, then upgrade to WebSocket) — most
+    // reliable across proxies/CDNs. Forcing websocket-first causes "closed before
+    // established" loops behind nginx/Cloudflare.
+    const s = io(API_ORIGIN, { auth: { token: accessToken } });
     s.on("connect", () => s.emit("stream:join", streamId));
+    s.on("connect_error", (err) => {
+      // Surface auth/handshake failures in the console so we can diagnose.
+      console.warn("[socket] connect_error:", err.message);
+    });
     /* eslint-disable react-hooks/set-state-in-effect */
     setSocket(s);
 

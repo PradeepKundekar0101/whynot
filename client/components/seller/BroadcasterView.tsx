@@ -326,11 +326,11 @@ export function BroadcasterView({ streamId, token, title }: BroadcasterViewProps
 
     const accessToken = getAccessToken();
     if (!accessToken) return;
-    const s = io(API_ORIGIN, {
-      auth: { token: accessToken },
-      transports: ["websocket", "polling"],
-    });
+    const s = io(API_ORIGIN, { auth: { token: accessToken } });
     s.on("connect", () => s.emit("stream:join", streamId));
+    s.on("connect_error", (err) => {
+      console.warn("[socket] connect_error:", err.message);
+    });
     /* eslint-disable react-hooks/set-state-in-effect */
     setSocket(s);
     return () => {

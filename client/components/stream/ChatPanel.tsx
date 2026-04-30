@@ -103,10 +103,7 @@ export function ChatPanel({ streamId, socket: externalSocket, variant = "light" 
     // Standalone socket fallback (chat panel used without parent socket).
     const token = getAccessToken();
     if (authLoading || !token) return;
-    const socket = io(API_ORIGIN, {
-      auth: { token },
-      transports: ["websocket", "polling"],
-    });
+    const socket = io(API_ORIGIN, { auth: { token } });
     socketRef.current = socket;
     socket.on("connect", () => {
       setConnected(true);
