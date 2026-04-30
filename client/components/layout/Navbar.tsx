@@ -1,12 +1,25 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
-import { Search, Heart, MessageCircle, Bell, Gift } from "lucide-react";
+import { Search, Heart, MessageCircle, Bell, Gift, User, Settings, ShoppingBag, LogOut, Video } from "lucide-react";
 import { Wallet } from "lucide-react";
 
 export function Navbar() {
   const { user, logout } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   return (
     <header className="sticky top-0 z-50 bg-white border-b border-border">
@@ -45,11 +58,74 @@ export function Navbar() {
                 <Wallet className="h-4 w-4" />
                 ${(user.walletBalance / 100).toFixed(2)}
               </Link>
-              <button onClick={() => logout()}
-                className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-sm font-bold text-primary-foreground"
-                title={`Logged in as ${user.username}`}>
-                {user.displayName.charAt(0).toUpperCase()}
-              </button>
+              {/* Avatar with dropdown */}
+              <div className="relative" ref={menuRef}>
+                <button
+                  onClick={() => setMenuOpen(v => !v)}
+                  className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-sm font-bold text-primary-foreground"
+                  title={`Logged in as ${user.username}`}
+                >
+                  {user.avatarUrl ? (
+                    <img src={user.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+                  ) : (
+                    user.displayName.charAt(0).toUpperCase()
+                  )}
+                </button>
+
+                {menuOpen && (
+                  <div className="absolute right-0 top-10 w-52 bg-white border border-border rounded-xl shadow-lg z-50 py-1 overflow-hidden">
+                    <div className="px-4 py-2 border-b border-border">
+                      <p className="text-sm font-semibold truncate">{user.displayName}</p>
+                      <p className="text-xs text-muted-foreground truncate">@{user.username}</p>
+                    </div>
+                    <Link
+                      href={`/profile/${user.username}`}
+                      onClick={() => setMenuOpen(false)}
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-secondary transition-colors"
+                    >
+                      <User className="h-4 w-4" /> Profile
+                    </Link>
+                    <Link
+                      href="/settings"
+                      onClick={() => setMenuOpen(false)}
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-secondary transition-colors"
+                    >
+                      <Settings className="h-4 w-4" /> Settings
+                    </Link>
+                    <Link
+                      href="/orders"
+                      onClick={() => setMenuOpen(false)}
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-secondary transition-colors"
+                    >
+                      <ShoppingBag className="h-4 w-4" /> Orders
+                    </Link>
+                    <Link
+                      href="/wallet"
+                      onClick={() => setMenuOpen(false)}
+                      className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-secondary transition-colors"
+                    >
+                      <Wallet className="h-4 w-4" /> Wallet
+                    </Link>
+                    {user.isSellerEnabled && (
+                      <Link
+                        href="/seller/dashboard"
+                        onClick={() => setMenuOpen(false)}
+                        className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-secondary transition-colors"
+                      >
+                        <Video className="h-4 w-4" /> Seller Dashboard
+                      </Link>
+                    )}
+                    <div className="border-t border-border mt-1">
+                      <button
+                        onClick={() => { setMenuOpen(false); logout(); }}
+                        className="flex items-center gap-2 px-4 py-2 text-sm text-destructive hover:bg-secondary transition-colors w-full text-left"
+                      >
+                        <LogOut className="h-4 w-4" /> Logout
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </>
           ) : (
             <>
