@@ -27,6 +27,7 @@ import {
 import { getStreamStats } from "../services/stream-stats.service";
 import { paramAsString } from "../lib/express-params";
 import prisma from "../lib/prisma";
+import { getIO } from "../websocket/emitter";
 import logger from "../lib/logger";
 
 const router = Router();
@@ -88,6 +89,7 @@ const scheduleShowSchema = z.object({
   notifyFollowers: z.boolean().optional(),
   boostEnabled: z.boolean().optional(),
   repeatRule: z.string().optional(),
+  visibility: z.enum(["public", "private"]).optional(),
 });
 
 async function ensureSellerEnabled(userId: string, res: Response): Promise<boolean> {
@@ -329,6 +331,44 @@ router.delete("/:id", authenticate, async (req: AuthenticatedRequest, res: Respo
       return;
     }
     logger.error(err, "Cancel show error");
+    res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
+  }
+});
+
+// GET /api/streams/:id/viewers — current presence list (seller + viewers)
+router.get("/:id/viewers", async (req, res) => {
+  try {
+    const streamId = paramAsString(req.params.id);
+    const io = getIO();
+    if (!io) {
+      res.json({ viewers: [] });
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sockets = (await io.in(`stream:${streamId}`).fetchSockets()) as any;
+    const userIds = new Set<string>();
+    for (const s of sockets as Array<{ user?: { userId: string } }>) {
+      if (s.user?.userId) userIds.add(s.user.userId);
+    }
+    if (userIds.size === 0) {
+      res.json({ viewers: [] });
+      return;
+    }
+    const stream = await prisma.stream.findUnique({
+      where: { id: streamId },
+      select: { sellerId: true },
+    });
+    const users = await prisma.user.findMany({
+      where: { id: { in: Array.from(userIds) } },
+      select: { id: true, username: true, displayName: true, avatarUrl: true },
+    });
+    const viewers = users.map((u) => ({
+      ...u,
+      isSeller: stream?.sellerId === u.id,
+    }));
+    res.json({ viewers });
+  } catch (err) {
+    logger.error(err, "Get viewers error");
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
   }
 });

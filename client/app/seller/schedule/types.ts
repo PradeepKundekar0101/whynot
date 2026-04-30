@@ -14,13 +14,7 @@ export interface ShowFormState {
   pickupInstructions: string;
   domesticShippingFee: string;
   combinedShippingEnabled: boolean;
-  isAdultContent: boolean;
-  allowChatReplays: boolean;
-  recordingEnabled: boolean;
-  matureAudienceFilter: boolean;
-  allowGuestCoHosts: boolean;
-  boostEnabled: boolean;
-  crossPostSocial: boolean;
+  visibility: "public" | "private";
   notifyFollowers: boolean;
 }
 
@@ -53,13 +47,7 @@ export function makeDefaultShowFormState(): ShowFormState {
     pickupInstructions: "",
     domesticShippingFee: "",
     combinedShippingEnabled: true,
-    isAdultContent: false,
-    allowChatReplays: true,
-    recordingEnabled: false,
-    matureAudienceFilter: false,
-    allowGuestCoHosts: false,
-    boostEnabled: false,
-    crossPostSocial: false,
+    visibility: "public",
     notifyFollowers: true,
   };
 }
@@ -68,8 +56,6 @@ export const SECTIONS = [
   { id: "show-info", label: "Show Information" },
   { id: "media", label: "Media" },
   { id: "shipping", label: "Shipping Settings" },
-  { id: "content", label: "Content Settings" },
-  { id: "options", label: "Show Options" },
-  { id: "discovery", label: "Show Discovery" },
+  { id: "visibility", label: "Visibility" },
   { id: "promote", label: "Promote Show" },
 ] as const;

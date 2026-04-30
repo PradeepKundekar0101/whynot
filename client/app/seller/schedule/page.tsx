@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Calendar, Clock, Link2, Copy } from "lucide-react";
+import { ArrowLeft, Calendar, Clock, Link2, Copy, Globe, Lock } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiFetch } from "@/lib/api";
 import { Navbar } from "@/components/layout/Navbar";
@@ -134,11 +134,8 @@ export default function ScheduleShowPage() {
               ? undefined
               : Math.round(parseFloat(form.domesticShippingFee) * 100),
           combinedShippingEnabled: form.combinedShippingEnabled,
-          isAdultContent: form.isAdultContent,
-          allowChatReplays: form.allowChatReplays,
-          recordingEnabled: form.recordingEnabled,
+          visibility: form.visibility,
           notifyFollowers: form.notifyFollowers,
-          boostEnabled: form.boostEnabled,
         }),
       });
 
@@ -396,74 +393,26 @@ export default function ScheduleShowPage() {
               />
             </Section>
 
-            {/* Content Settings */}
+            {/* Visibility */}
             <Section
-              id="content"
-              title="Content Settings"
-              description="Manage how your show appears and behaves for viewers."
+              id="visibility"
+              title="Visibility"
+              description="Choose who can find and join this show."
             >
-              <div className="divide-y divide-border">
-                <ToggleRow
-                  label="18+ content"
-                  description="Mark this show as containing adult themes (rare for cards, more common for other categories)."
-                  checked={form.isAdultContent}
-                  onChange={(v) => update("isAdultContent", v)}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <VisibilityCard
+                  active={form.visibility === "public"}
+                  icon={<Globe className="h-5 w-5" />}
+                  title="Public"
+                  description="Listed on the home feed and discoverable by anyone."
+                  onClick={() => update("visibility", "public")}
                 />
-                <ToggleRow
-                  label="Allow chat replays"
-                  description="Show chat history when viewers re-watch the recorded show."
-                  checked={form.allowChatReplays}
-                  onChange={(v) => update("allowChatReplays", v)}
-                />
-              </div>
-            </Section>
-
-            {/* Show Options */}
-            <Section
-              id="options"
-              title="Show Options"
-              description="Settings for how your show records and accepts co-hosts."
-            >
-              <div className="divide-y divide-border">
-                <ToggleRow
-                  label="Mature audience filter"
-                  description="Restrict this show to viewers who have opted into mature content."
-                  checked={form.matureAudienceFilter}
-                  onChange={(v) => update("matureAudienceFilter", v)}
-                />
-                <ToggleRow
-                  label="Allow guest co-hosts"
-                  description="Coming soon — let other sellers join your stream as co-hosts."
-                  checked={form.allowGuestCoHosts}
-                  onChange={(v) => update("allowGuestCoHosts", v)}
-                />
-                <ToggleRow
-                  label="Recording enabled"
-                  description="Save the stream so viewers can watch the replay later."
-                  checked={form.recordingEnabled}
-                  onChange={(v) => update("recordingEnabled", v)}
-                />
-              </div>
-            </Section>
-
-            {/* Show Discovery */}
-            <Section
-              id="discovery"
-              title="Show Discovery"
-              description="Help more buyers discover your show."
-            >
-              <div className="divide-y divide-border">
-                <ToggleRow
-                  label="Boost in feed"
-                  description="Coming soon — promote your show to more viewers in the home feed for a small fee."
-                  checked={form.boostEnabled}
-                  onChange={(v) => update("boostEnabled", v)}
-                />
-                <ToggleRow
-                  label="Cross-post to social"
-                  description="Coming soon — auto-share your show on X / Instagram when it goes live."
-                  checked={form.crossPostSocial}
-                  onChange={(v) => update("crossPostSocial", v)}
+                <VisibilityCard
+                  active={form.visibility === "private"}
+                  icon={<Lock className="h-5 w-5" />}
+                  title="Private"
+                  description="Invite only — share the show link directly with your buyers."
+                  onClick={() => update("visibility", "private")}
                 />
               </div>
             </Section>
@@ -544,5 +493,51 @@ export default function ScheduleShowPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function VisibilityCard({
+  active,
+  icon,
+  title,
+  description,
+  onClick,
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`text-left rounded-xl border p-4 transition-colors flex items-start gap-3 ${
+        active
+          ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+          : "border-border hover:bg-secondary"
+      }`}
+    >
+      <span
+        className={`mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-full ${
+          active ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"
+        }`}
+      >
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold">{title}</span>
+        <span className="block text-xs text-muted-foreground mt-0.5 leading-snug">
+          {description}
+        </span>
+      </span>
+      <span
+        className={`mt-1 h-4 w-4 shrink-0 rounded-full border-2 ${
+          active ? "border-primary bg-primary" : "border-border"
+        }`}
+      />
+    </button>
   );
 }

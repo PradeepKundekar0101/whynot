@@ -85,6 +85,9 @@ model Stream {
   recordingEnabled         Boolean   @default(false)
   notifyFollowers          Boolean   @default(true)
 
+  /// "public" — listed on home / discovery feeds. "private" — invite-only via direct link.
+  visibility               String    @default("public")
+
   moderatorIds             String[]  @default([])
   boostEnabled             Boolean   @default(false)
 

@@ -8,8 +8,15 @@ import { Navbar } from "@/components/layout/Navbar";
 import { BroadcasterView } from "@/components/seller/BroadcasterView";
 
 interface ResumePayload {
-  stream: { id: string; title: string; category: string };
-  token: string;
+  stream: {
+    id: string;
+    title: string;
+    category: string;
+    status?: string;
+    scheduledStartAt?: string | null;
+  };
+  /** null when the show is still scheduled (not live yet). */
+  token: string | null;
 }
 
 /**
@@ -101,6 +108,8 @@ export default function SellerStreamPage() {
       streamId={data.stream.id}
       token={data.token}
       title={data.stream.title}
+      status={data.stream.status ?? "live"}
+      scheduledStartAt={data.stream.scheduledStartAt ?? null}
     />
   );
 }

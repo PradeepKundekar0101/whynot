@@ -11,6 +11,7 @@ import {
   Trash2,
   Clock,
   AlertTriangle,
+  ExternalLink,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiFetch } from "@/lib/api";
@@ -70,6 +71,7 @@ function ShowCard({
   now,
   onCancel,
   onGoLive,
+  onOpen,
   goLiveLoading,
   cancelLoading,
 }: {
@@ -77,12 +79,14 @@ function ShowCard({
   now: number;
   onCancel: (id: string) => Promise<void>;
   onGoLive: (id: string) => Promise<void>;
+  onOpen: (id: string) => void;
   goLiveLoading: boolean;
   cancelLoading: boolean;
 }) {
   const isLive = show.status === "live";
   const startMs = show.scheduledStartAt ? new Date(show.scheduledStartAt).getTime() : null;
   const canGoLive = isLive || (startMs !== null && startMs - now <= GO_LIVE_WINDOW_MS);
+  const isFuture = !isLive && startMs !== null && startMs > now;
   const minutesUntil =
     startMs !== null ? Math.round((startMs - now) / 60000) : null;
 
@@ -139,6 +143,17 @@ function ShowCard({
             <Radio className="h-3.5 w-3.5" />
             {goLiveLoading ? "Starting…" : isLive ? "Resume" : "Go Live"}
           </button>
+          {isFuture && (
+            <button
+              type="button"
+              onClick={() => onOpen(show.id)}
+              title="Open the show now to pre-build breaks before going live"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full border border-primary text-primary hover:bg-primary/5 transition-colors"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open
+            </button>
+          )}
           {!isLive && (
             <>
               <button
@@ -429,6 +444,7 @@ export default function SellerDashboard() {
                   now={now}
                   onCancel={handleCancel}
                   onGoLive={handleGoLive}
+                  onOpen={(id) => router.push(`/seller/stream/${id}`)}
                   goLiveLoading={pendingId === s.id && pendingAction === "go-live"}
                   cancelLoading={pendingId === s.id && pendingAction === "cancel"}
                 />

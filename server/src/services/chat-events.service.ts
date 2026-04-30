@@ -6,6 +6,7 @@ import logger from "../lib/logger";
 /** Discriminated union of every system event payload we emit into chat. */
 export type SystemEventData =
   | { eventType: "user_joined"; userId: string; username: string }
+  | { eventType: "user_left"; userId: string; username: string }
   | { eventType: "user_followed"; followerId: string; followerUsername: string }
   | {
       eventType: "auction_started";
@@ -69,7 +70,7 @@ const throttleBuckets = new Map<
 >();
 
 const THROTTLE_WINDOW_MS = 1500;
-const THROTTLED_EVENT_TYPES: SystemEventData["eventType"][] = ["user_joined"];
+const THROTTLED_EVENT_TYPES: SystemEventData["eventType"][] = ["user_joined", "user_left"];
 
 function throttleKey(streamId: string, eventType: string) {
   return `${streamId}:${eventType}`;

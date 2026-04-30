@@ -5,12 +5,12 @@ import Link from "next/link";
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
 import { io, Socket } from "socket.io-client";
-import { Search, Wallet } from "lucide-react";
+import { Search, Wallet, Calendar, Clock } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiFetch, getAccessToken, API_ORIGIN } from "@/lib/api";
 import { Navbar } from "@/components/layout/Navbar";
 import { LiveStreamPlayer } from "@/components/stream/LiveStreamPlayer";
-import { ChatPanel } from "@/components/stream/ChatPanel";
+import { StreamRightPanel } from "@/components/stream/StreamRightPanel";
 import { ConfettiOverlay } from "@/components/stream/ConfettiOverlay";
 import { BreakCardCompact } from "@/components/stream/break/BreakCardCompact";
 import { SpotsListModal } from "@/components/stream/break/SpotsListModal";
@@ -27,6 +27,8 @@ interface StreamData {
   title: string;
   category: string;
   status: string;
+  scheduledStartAt: string | null;
+  visibility?: string;
   viewerCount: number;
   seller: {
     id: string;
@@ -41,6 +43,13 @@ const BUYER_TABS = [
   { id: "sold", label: "Sold" },
 ] as const;
 type BuyerTab = (typeof BUYER_TABS)[number]["id"];
+
+/** Bottom-rail tab on small screens to swap between Shop and the chat panel. */
+const MOBILE_PANELS = [
+  { id: "shop", label: "Shop" },
+  { id: "panel", label: "Chat" },
+] as const;
+type MobilePanel = (typeof MOBILE_PANELS)[number]["id"];
 
 /**
  * Isolates the LiveKit player so a runtime error inside the SDK (WebRTC,
@@ -65,6 +74,19 @@ class PlayerErrorBoundary extends Component<
   }
 }
 
+function formatScheduledStart(iso: string | null) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export default function StreamWatchPage() {
   const params = useParams();
   const router = useRouter();
@@ -81,9 +103,13 @@ export default function StreamWatchPage() {
   const [search, setSearch] = useState("");
   const [openBreak, setOpenBreak] = useState<Break | null>(null);
   const [viewerSessionId, setViewerSessionId] = useState<string | null>(null);
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("shop");
 
   const livekitUrl =
     process.env.NEXT_PUBLIC_LIVEKIT_URL || "wss://unacademy-7s3z9grv.livekit.cloud";
+
+  const isLive = stream?.status === "live";
+  const isScheduled = stream?.status === "scheduled";
 
   // Stable per-tab id (sessionStorage survives React Strict Mode remount double-invoke).
   useEffect(() => {
@@ -129,9 +155,8 @@ export default function StreamWatchPage() {
     void load();
   }, [streamId]);
 
-  // The seller can't watch their own stream as a buyer — LiveKit collisions
-  // and a near-instant renderer crash from token churn ensue. Bounce them to
-  // the broadcaster view, which is what they actually want.
+  // Bounce sellers viewing their own stream to the broadcaster page (works for
+  // scheduled and live equally; broadcaster page handles both states).
   useEffect(() => {
     if (!user || !stream) return;
     if (user.id === stream.seller.id) {
@@ -146,10 +171,9 @@ export default function StreamWatchPage() {
     }
   }, [walletBalance, refreshUser]);
 
-  // Join stream when user + stream loaded (presence is idempotent via viewerSessionId).
-  // Important: depend on stable scalars (user.id, stream.id+status), NOT the `user`/`stream`
-  // object references — every wallet:balance_updated event swaps `user` for a new
-  // object reference, which would otherwise unmount LiveKit and re-issue /join.
+  // Join stream when user + stream loaded and the show is live. Scheduled shows
+  // skip /join entirely — buyers can chat & inspect breaks ahead of time but
+  // don't need a LiveKit token until the seller goes live.
   const userIdForJoin = user?.id ?? null;
   const streamStatusForJoin = stream?.status ?? null;
   useEffect(() => {
@@ -188,13 +212,9 @@ export default function StreamWatchPage() {
     const accessToken = getAccessToken();
     if (!accessToken || !stream) return;
 
-    // Use socket.io defaults (polling first, then upgrade to WebSocket) — most
-    // reliable across proxies/CDNs. Forcing websocket-first causes "closed before
-    // established" loops behind nginx/Cloudflare.
     const s = io(API_ORIGIN, { auth: { token: accessToken } });
     s.on("connect", () => s.emit("stream:join", streamId));
     s.on("connect_error", (err) => {
-      // Surface auth/handshake failures in the console so we can diagnose.
       console.warn("[socket] connect_error:", err.message);
     });
     /* eslint-disable react-hooks/set-state-in-effect */
@@ -231,8 +251,6 @@ export default function StreamWatchPage() {
 
   const activeSpotInfo = findActiveSpot(breaks);
 
-  // Memoize props passed to LiveStreamPlayer so identical-content re-renders
-  // don't show up as new prop references and cause LiveKitRoom to thrash.
   const playerSeller = useMemo(
     () =>
       stream
@@ -276,82 +294,57 @@ export default function StreamWatchPage() {
     );
   }
 
+  const scheduledLabel = formatScheduledStart(stream.scheduledStartAt);
+
+  const shopPanel = (
+    <ShopPanel
+      search={search}
+      onSearch={setSearch}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      breaks={filtered}
+      breaksLoading={breaksLoading}
+      activeSpotInfo={activeSpotInfo}
+      onSeeSpots={(brk) => setOpenBreak(brk)}
+    />
+  );
+
+  const rightPanel = (
+    <StreamRightPanel
+      streamId={streamId}
+      socket={socket}
+      variant="light"
+      headerSlot={
+        user ? (
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between shrink-0">
+            <span className="text-xs text-muted-foreground">Your balance</span>
+            <Link
+              href="/wallet"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold hover:underline"
+            >
+              <Wallet className="h-3.5 w-3.5" />${(user.walletBalance / 100).toFixed(2)}
+            </Link>
+          </div>
+        ) : null
+      }
+    />
+  );
+
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <Navbar />
 
-      <div className="flex flex-1 min-h-0">
-        {/* ── Left: Shop ───────────────────────────────────── */}
-        <aside className="hidden lg:flex flex-col w-80 border-r border-border bg-white min-h-0">
-          <div className="px-4 pt-4 pb-2 shrink-0">
-            <h2 className="text-lg font-bold tracking-tight">Shop</h2>
-          </div>
-
-          <div className="px-4 pb-3 shrink-0">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search breaks..."
-                className="w-full h-9 pl-8 pr-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-          </div>
-
-          {/* Tabs */}
-          <div className="flex items-center gap-1 px-4 pb-3 shrink-0">
-            {BUYER_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "px-3 h-8 rounded-full text-sm font-medium transition-colors",
-                  activeTab === tab.id
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:bg-secondary"
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              disabled
-              title="Filter / sort coming soon"
-              className="ml-auto text-xs text-muted-foreground cursor-not-allowed"
-            >
-              Filter · Sort
-            </button>
-          </div>
-
-          {/* Break list */}
-          <div className="flex-1 overflow-y-auto px-4 pb-4 flex flex-col gap-3 min-h-0">
-            {breaksLoading ? (
-              <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
-            ) : filtered.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-6 text-center">
-                {activeTab === "sold" ? "No completed breaks yet." : "No breaks in this show yet."}
-              </p>
-            ) : (
-              filtered.map((b) => (
-                <BreakCardCompact
-                  key={b.id}
-                  break={b}
-                  active={activeSpotInfo?.breakItem.id === b.id}
-                  onSeeSpots={(brk) => setOpenBreak(brk)}
-                />
-              ))
-            )}
-          </div>
+      <div className="flex flex-1 min-h-0 lg:flex-row flex-col">
+        {/* ── Desktop: Left Shop sidebar ─────────────────── */}
+        <aside className="hidden lg:flex flex-col w-72 xl:w-80 border-r border-border bg-white min-h-0 shrink-0">
+          {shopPanel}
         </aside>
 
         {/* ── Center: Video + overlay ─────────────────────── */}
-        <main className="flex-1 flex flex-col min-w-0 bg-neutral-950">
-          <div className="flex-1 flex items-center justify-center p-3 min-h-0">
+        <main className="flex-1 flex flex-col min-w-0 min-h-0 bg-neutral-950">
+          <div className="flex-1 flex items-center justify-center p-2 sm:p-3 min-h-0">
             <div className="relative h-full max-h-full aspect-[9/16] bg-black rounded-xl overflow-hidden w-full max-w-md">
-              {token && playerSeller ? (
+              {isLive && token && playerSeller ? (
                 <PlayerErrorBoundary
                   fallback={
                     <div className="flex flex-col items-center justify-center h-full bg-black text-white text-sm px-6 text-center gap-2">
@@ -373,9 +366,14 @@ export default function StreamWatchPage() {
                     seller={playerSeller}
                   />
                 </PlayerErrorBoundary>
+              ) : isScheduled ? (
+                <ScheduledPlaceholder
+                  scheduledLabel={scheduledLabel}
+                  sellerName={stream.seller.displayName}
+                />
               ) : (
-                <div className="flex items-center justify-center h-full text-white text-sm">
-                  {stream.status === "live"
+                <div className="flex items-center justify-center h-full text-white text-sm px-6 text-center">
+                  {isLive
                     ? user
                       ? "Connecting to stream..."
                       : "Log in to watch this stream"
@@ -404,18 +402,21 @@ export default function StreamWatchPage() {
                     <p className="text-[10px] text-white/70 leading-none mt-0.5">@{stream.seller.username}</p>
                   </div>
                 </div>
-                {stream.status === "live" && (
+                {isLive ? (
                   <span className="inline-flex items-center gap-1 bg-red-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-full">
                     <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
                     LIVE · {viewerCount}
                   </span>
-                )}
+                ) : isScheduled ? (
+                  <span className="inline-flex items-center gap-1 bg-amber-500/90 text-white text-[11px] font-bold px-2 py-0.5 rounded-full">
+                    <Calendar className="h-3 w-3" />
+                    Upcoming
+                  </span>
+                ) : null}
               </div>
 
-              {/* Reveal mode theater overlay (renders on top of everything else, suppresses bid UI) */}
               <RevealOverlay reveal={activeReveal} randomizing={!!randomizing} />
 
-              {/* Active auction overlay (hidden during reveal mode) */}
               {activeSpotInfo && !activeReveal && !randomizing && (
                 <ActiveAuctionOverlay
                   breakItem={activeSpotInfo.breakItem}
@@ -431,27 +432,44 @@ export default function StreamWatchPage() {
           {/* Title bar below video */}
           <div className="px-4 py-3 bg-white border-t border-border shrink-0">
             <h1 className="text-base font-bold truncate">{stream.title}</h1>
-            <p className="text-xs text-muted-foreground">{stream.category}</p>
+            <p className="text-xs text-muted-foreground">
+              {stream.category}
+              {isScheduled && scheduledLabel ? ` · Starts ${scheduledLabel}` : ""}
+            </p>
+          </div>
+
+          {/* Mobile/Tablet: tab strip + active panel */}
+          <div className="lg:hidden flex flex-col flex-1 min-h-0 border-t border-border bg-white">
+            <div className="flex shrink-0 border-b border-border">
+              {MOBILE_PANELS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setMobilePanel(p.id)}
+                  className={cn(
+                    "flex-1 h-10 text-sm font-semibold transition-colors",
+                    mobilePanel === p.id
+                      ? "text-foreground border-b-2 border-primary -mb-px"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 min-h-0 flex flex-col">
+              {mobilePanel === "shop" ? (
+                <div className="flex-1 min-h-0 flex flex-col">{shopPanel}</div>
+              ) : (
+                <div className="flex-1 min-h-0 flex flex-col">{rightPanel}</div>
+              )}
+            </div>
           </div>
         </main>
 
-        {/* ── Right: Chat ─────────────────────────────────── */}
-        <aside className="hidden lg:flex flex-col w-80 border-l border-border bg-white min-h-0">
-          {/* Wallet chip */}
-          {user && (
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Your balance</span>
-              <Link
-                href="/wallet"
-                className="inline-flex items-center gap-1.5 text-sm font-semibold hover:underline"
-              >
-                <Wallet className="h-3.5 w-3.5" />${(user.walletBalance / 100).toFixed(2)}
-              </Link>
-            </div>
-          )}
-          <div className="flex-1 min-h-0">
-            <ChatPanel streamId={streamId} socket={socket} />
-          </div>
+        {/* ── Desktop: Right panel ─────────────────────────── */}
+        <aside className="hidden lg:flex flex-col w-72 xl:w-80 border-l border-border bg-white min-h-0 shrink-0">
+          {rightPanel}
         </aside>
       </div>
 
@@ -467,6 +485,119 @@ export default function StreamWatchPage() {
       <SpinAnimation spin={activeSpin} onClose={dismissSpin} />
       <PersonalWinModal win={personalWin} onClose={dismissPersonalWin} />
       <ConfettiOverlay trigger={confettiTick} />
+    </div>
+  );
+}
+
+function ScheduledPlaceholder({
+  scheduledLabel,
+  sellerName,
+}: {
+  scheduledLabel: string | null;
+  sellerName: string;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full bg-gradient-to-b from-neutral-900 to-black text-white text-center px-6 gap-3">
+      <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary/20 border border-primary/40">
+        <Clock className="h-6 w-6 text-primary" />
+      </div>
+      <div>
+        <p className="text-sm uppercase tracking-wider text-white/60">Upcoming show</p>
+        {scheduledLabel ? (
+          <p className="text-lg font-bold mt-1">{scheduledLabel}</p>
+        ) : (
+          <p className="text-lg font-bold mt-1">Starting soon</p>
+        )}
+      </div>
+      <p className="text-xs text-white/60 max-w-xs leading-snug">
+        {sellerName} hasn&rsquo;t gone live yet. Hang tight — chat is open and you can preview
+        the breaks while you wait.
+      </p>
+    </div>
+  );
+}
+
+function ShopPanel({
+  search,
+  onSearch,
+  activeTab,
+  onTabChange,
+  breaks,
+  breaksLoading,
+  activeSpotInfo,
+  onSeeSpots,
+}: {
+  search: string;
+  onSearch: (s: string) => void;
+  activeTab: BuyerTab;
+  onTabChange: (t: BuyerTab) => void;
+  breaks: Break[];
+  breaksLoading: boolean;
+  activeSpotInfo: { breakItem: Break } | null;
+  onSeeSpots: (brk: Break) => void;
+}) {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="px-4 pt-4 pb-2 shrink-0">
+        <h2 className="text-lg font-bold tracking-tight">Shop</h2>
+      </div>
+
+      <div className="px-4 pb-3 shrink-0">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => onSearch(e.target.value)}
+            placeholder="Search breaks..."
+            className="w-full h-9 pl-8 pr-3 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-1 px-4 pb-3 shrink-0">
+        {BUYER_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => onTabChange(tab.id)}
+            className={cn(
+              "px-3 h-8 rounded-full text-sm font-medium transition-colors",
+              activeTab === tab.id
+                ? "bg-foreground text-background"
+                : "text-muted-foreground hover:bg-secondary"
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          disabled
+          title="Filter / sort coming soon"
+          className="ml-auto text-xs text-muted-foreground cursor-not-allowed"
+        >
+          Filter · Sort
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 pb-4 flex flex-col gap-3 min-h-0">
+        {breaksLoading ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
+        ) : breaks.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">
+            {activeTab === "sold" ? "No completed breaks yet." : "No breaks in this show yet."}
+          </p>
+        ) : (
+          breaks.map((b) => (
+            <BreakCardCompact
+              key={b.id}
+              break={b}
+              active={activeSpotInfo?.breakItem.id === b.id}
+              onSeeSpots={(brk) => onSeeSpots(brk)}
+            />
+          ))
+        )}
+      </div>
     </div>
   );
 }

@@ -144,7 +144,7 @@ export async function getLiveStreams(category?: string) {
     } catch {}
   }
 
-  const where: any = { status: "live" };
+  const where: any = { status: "live", visibility: "public" };
   if (category) where.category = category;
 
   const streams = await prisma.stream.findMany({
@@ -203,6 +203,10 @@ export async function resumeOwnStream(sellerId: string) {
 /**
  * Mint a fresh publisher token for a specific stream the caller owns.
  * Used by the broadcaster page so a hard reload of /seller/stream/:id can rejoin.
+ *
+ * For scheduled (not yet live) shows we return stream data with a null token —
+ * lets the seller open the show to manage breaks ahead of time without a
+ * LiveKit room (the room is created at go-live).
  */
 export async function getBroadcasterToken(streamId: string, sellerId: string) {
   const stream = await prisma.stream.findUnique({
@@ -212,6 +216,10 @@ export async function getBroadcasterToken(streamId: string, sellerId: string) {
 
   if (!stream) throw new Error("STREAM_NOT_FOUND");
   if (stream.sellerId !== sellerId) throw new Error("NOT_AUTHORIZED");
+
+  if (stream.status === "scheduled") {
+    return { stream, token: null as string | null };
+  }
   if (stream.status !== "live") throw new Error("STREAM_NOT_LIVE");
 
   const token = await createPublisherToken(stream.livekitRoomName, sellerId, stream.seller.displayName);

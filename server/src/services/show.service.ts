@@ -29,6 +29,7 @@ export interface ScheduleShowInput {
   notifyFollowers?: boolean;
   boostEnabled?: boolean;
   repeatRule?: string;
+  visibility?: "public" | "private";
 }
 
 export type ShowUpdateInput = Partial<ScheduleShowInput>;
@@ -111,6 +112,7 @@ export async function scheduleShow(sellerId: string, input: ScheduleShowInput) {
       recordingEnabled: input.recordingEnabled ?? false,
       notifyFollowers: input.notifyFollowers ?? true,
       boostEnabled: input.boostEnabled ?? false,
+      visibility: input.visibility ?? "public",
     },
     include: {
       seller: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
@@ -169,6 +171,7 @@ export async function updateScheduledShow(
       ...(input.recordingEnabled !== undefined && { recordingEnabled: input.recordingEnabled }),
       ...(input.notifyFollowers !== undefined && { notifyFollowers: input.notifyFollowers }),
       ...(input.boostEnabled !== undefined && { boostEnabled: input.boostEnabled }),
+      ...(input.visibility !== undefined && { visibility: input.visibility }),
     },
   });
 }
@@ -216,6 +219,7 @@ export async function getDiscoverUpcoming(limit = DISCOVER_FEED_LIMIT) {
   return prisma.stream.findMany({
     where: {
       status: "scheduled",
+      visibility: "public",
       scheduledStartAt: { gte: new Date() },
     },
     orderBy: { scheduledStartAt: "asc" },
@@ -229,7 +233,7 @@ export async function getDiscoverUpcoming(limit = DISCOVER_FEED_LIMIT) {
 /** Recently ended streams from all sellers (homepage discovery). */
 export async function getDiscoverPast(limit = DISCOVER_FEED_LIMIT) {
   return prisma.stream.findMany({
-    where: { status: "ended" },
+    where: { status: "ended", visibility: "public" },
     orderBy: { endedAt: "desc" },
     take: limit,
     include: {
