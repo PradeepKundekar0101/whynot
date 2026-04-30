@@ -99,29 +99,36 @@ router.post("/login", async (req: Request, res: Response) => {
     return;
   }
 
-  const result = await loginUser(parsed.data.email, parsed.data.password);
-  if (!result) {
-    res.status(401).json({
-      error: { code: "INVALID_CREDENTIALS", message: "Invalid credentials" },
-    });
-    return;
-  }
+  try {
+    const result = await loginUser(parsed.data.email, parsed.data.password);
+    if (!result) {
+      res.status(401).json({
+        error: { code: "INVALID_CREDENTIALS", message: "Invalid credentials" },
+      });
+      return;
+    }
 
-  res.cookie("refreshToken", result.refreshToken, REFRESH_COOKIE_OPTIONS);
-  res.json({
-    user: {
-      id: result.user.id,
-      email: result.user.email,
-      username: result.user.username,
-      displayName: result.user.displayName,
-      avatarUrl: result.user.avatarUrl,
-      bio: result.user.bio,
-      isSellerEnabled: result.user.isSellerEnabled,
-      walletBalance: result.user.walletBalance,
-      createdAt: result.user.createdAt,
-    },
-    accessToken: result.accessToken,
-  });
+    res.cookie("refreshToken", result.refreshToken, REFRESH_COOKIE_OPTIONS);
+    res.json({
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        username: result.user.username,
+        displayName: result.user.displayName,
+        avatarUrl: result.user.avatarUrl,
+        bio: result.user.bio,
+        isSellerEnabled: result.user.isSellerEnabled,
+        walletBalance: result.user.walletBalance,
+        createdAt: result.user.createdAt,
+      },
+      accessToken: result.accessToken,
+    });
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({
+      error: { code: "INTERNAL_ERROR", message: "Something went wrong" },
+    });
+  }
 });
 
 router.post("/refresh", async (req: Request, res: Response) => {
