@@ -8,6 +8,7 @@ import walletRoutes from "./routes/wallet";
 import webhookRoutes from "./routes/webhook";
 import streamRoutes from "./routes/stream";
 import chatRoutes from "./routes/chat";
+import listingRoutes from "./routes/listing";
 import { setupWebSocket } from "./websocket";
 
 const app = express();
@@ -33,6 +34,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/streams", streamRoutes);
 app.use("/api/streams", chatRoutes);
+app.use("/api/listings", listingRoutes);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
