@@ -20,6 +20,8 @@ import {
   getPastShows,
   getSellerStats,
   goLiveOnScheduledShow,
+  getDiscoverUpcoming,
+  getDiscoverPast,
 } from "../services/show.service";
 import { getStreamStats } from "../services/stream-stats.service";
 import { paramAsString } from "../lib/express-params";
@@ -202,6 +204,17 @@ router.get("/live", async (req, res) => {
     res.json({ streams });
   } catch (err) {
     logger.error(err, "Live streams error");
+    res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
+  }
+});
+
+// GET /api/streams/discover/home — public upcoming + past rows for homepage
+router.get("/discover/home", async (_req, res) => {
+  try {
+    const [upcoming, past] = await Promise.all([getDiscoverUpcoming(), getDiscoverPast()]);
+    res.json({ upcoming, past });
+  } catch (err) {
+    logger.error(err, "Discover home error");
     res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
   }
 });

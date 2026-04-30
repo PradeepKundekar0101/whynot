@@ -18,6 +18,8 @@ interface ApiStream {
   primaryCategory: string | null;
   viewerCount: number;
   thumbnailUrl: string | null;
+  scheduledStartAt?: string | null;
+  endedAt?: string | null;
   seller: { username: string; avatarUrl: string | null } | null;
 }
 
@@ -34,6 +36,8 @@ function categoryLabelFor(stream: ApiStream): string {
 
 export default function Home() {
   const [liveStreams, setLiveStreams] = useState<StreamCardData[]>([]);
+  const [upcomingStreams, setUpcomingStreams] = useState<StreamCardData[]>([]);
+  const [pastStreams, setPastStreams] = useState<StreamCardData[]>([]);
   const [rawStreams, setRawStreams] = useState<ApiStream[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -41,9 +45,12 @@ export default function Home() {
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await apiFetch("/streams/live");
-        if (!cancelled && res.ok) {
-          const data = await res.json();
+        const [liveRes, discoverRes] = await Promise.all([
+          apiFetch("/streams/live"),
+          apiFetch("/streams/discover/home"),
+        ]);
+        if (!cancelled && liveRes.ok) {
+          const data = await liveRes.json();
           const streams: ApiStream[] = data.streams ?? [];
           setRawStreams(streams);
           setLiveStreams(
@@ -56,6 +63,37 @@ export default function Home() {
               isLive: true,
               sellerUsername: s.seller?.username || "unknown",
               sellerAvatar: s.seller?.avatarUrl || "",
+            }))
+          );
+        }
+        if (!cancelled && discoverRes.ok) {
+          const d = await discoverRes.json();
+          const upcoming: ApiStream[] = d.upcoming ?? [];
+          const past: ApiStream[] = d.past ?? [];
+          setUpcomingStreams(
+            upcoming.map((s) => ({
+              id: s.id,
+              title: s.title,
+              category: categoryLabelFor(s),
+              viewerCount: s.viewerCount ?? 0,
+              thumbnailUrl: s.thumbnailUrl,
+              isLive: false,
+              sellerUsername: s.seller?.username || "unknown",
+              sellerAvatar: s.seller?.avatarUrl || "",
+              scheduledStartAt: s.scheduledStartAt ?? null,
+            }))
+          );
+          setPastStreams(
+            past.map((s) => ({
+              id: s.id,
+              title: s.title,
+              category: categoryLabelFor(s),
+              viewerCount: s.viewerCount ?? 0,
+              thumbnailUrl: s.thumbnailUrl,
+              isLive: false,
+              sellerUsername: s.seller?.username || "unknown",
+              sellerAvatar: s.seller?.avatarUrl || "",
+              endedAt: s.endedAt ?? null,
             }))
           );
         }
@@ -99,6 +137,40 @@ export default function Home() {
               <div className="flex gap-4 overflow-x-auto pb-2">
                 {liveStreams.map((stream) => (
                   <StreamCard key={stream.id} stream={stream} />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="mb-10">
+            <h2 className="text-lg font-semibold mb-4">Upcoming shows</h2>
+            {!loaded ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : upcomingStreams.length === 0 ? (
+              <p className="text-sm text-muted-foreground rounded-2xl border border-dashed border-border bg-white px-6 py-8 text-center">
+                No upcoming shows scheduled. Check back soon or browse live categories below.
+              </p>
+            ) : (
+              <div className="flex gap-4 overflow-x-auto pb-2">
+                {upcomingStreams.map((stream) => (
+                  <StreamCard key={stream.id} stream={stream} />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="mb-10">
+            <h2 className="text-lg font-semibold mb-4">Past shows</h2>
+            {!loaded ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : pastStreams.length === 0 ? (
+              <p className="text-sm text-muted-foreground rounded-2xl border border-dashed border-border bg-white px-6 py-8 text-center">
+                No past shows to show yet. Ended streams will appear here.
+              </p>
+            ) : (
+              <div className="flex gap-4 overflow-x-auto pb-2">
+                {pastStreams.map((stream) => (
+                  <StreamCard key={`past-${stream.id}`} stream={stream} />
                 ))}
               </div>
             )}

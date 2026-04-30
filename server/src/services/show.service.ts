@@ -209,6 +209,35 @@ export async function getPastShows(sellerId: string, limit = 20) {
   });
 }
 
+const DISCOVER_FEED_LIMIT = 18;
+
+/** Platform-wide scheduled shows with a future start time (homepage discovery). */
+export async function getDiscoverUpcoming(limit = DISCOVER_FEED_LIMIT) {
+  return prisma.stream.findMany({
+    where: {
+      status: "scheduled",
+      scheduledStartAt: { gte: new Date() },
+    },
+    orderBy: { scheduledStartAt: "asc" },
+    take: limit,
+    include: {
+      seller: { select: { username: true, avatarUrl: true } },
+    },
+  });
+}
+
+/** Recently ended streams from all sellers (homepage discovery). */
+export async function getDiscoverPast(limit = DISCOVER_FEED_LIMIT) {
+  return prisma.stream.findMany({
+    where: { status: "ended" },
+    orderBy: { endedAt: "desc" },
+    take: limit,
+    include: {
+      seller: { select: { username: true, avatarUrl: true } },
+    },
+  });
+}
+
 /**
  * Aggregate seller dashboard stats:
  *  - totalShows: scheduled + live + ended (cancelled excluded)
