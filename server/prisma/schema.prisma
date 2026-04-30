@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id               String   @id @default(uuid())
+  email            String   @unique
+  username         String   @unique
+  passwordHash     String
+  displayName      String
+  avatarUrl        String?
+  bio              String?
+  isSellerEnabled  Boolean  @default(false)
+  sellerRating     Float    @default(5.0)
+  walletBalance    Int      @default(0)
+  stripeCustomerId String?
+  createdAt        DateTime @default(now())
+
+  streamsHosted    Stream[]
+  bidsPlaced       Bid[]
+  spotsPurchased   SpotReservation[]
+  walletTxns       WalletTransaction[]
+  followers        Follow[] @relation("Followed")
+  following        Follow[] @relation("Follower")
+}
+
+model Stream {
+  id              String    @id @default(uuid())
+  sellerId        String
+  seller          User      @relation(fields: [sellerId], references: [id])
+  title           String
+  thumbnailUrl    String?
+  category        String
+  status          String
+  livekitRoomName String    @unique
+  viewerCount     Int       @default(0)
+  startedAt       DateTime?
+  endedAt         DateTime?
+  createdAt       DateTime  @default(now())
+
+  listings        Listing[]
+  chatMessages    ChatMessage[]
+}
+
+model Listing {
+  id            String    @id @default(uuid())
+  streamId      String
+  stream        Stream    @relation(fields: [streamId], references: [id])
+  type          String
+  title         String
+  description   String?
+  imageUrl      String?
+  startingBid   Int?
+  currentBid    Int?
+  bidIncrement  Int?
+  highBidderId  String?
+  endsAt        DateTime?
+  totalSpots    Int?
+  spotsSold     Int?      @default(0)
+  pricePerSpot  Int?
+  price         Int?
+  inventory     Int?
+  status        String
+  createdAt     DateTime  @default(now())
+
+  bids          Bid[]
+  reservations  SpotReservation[]
+}
+
+model Bid {
+  id        String   @id @default(uuid())
+  listingId String
+  listing   Listing  @relation(fields: [listingId], references: [id])
+  bidderId  String
+  bidder    User     @relation(fields: [bidderId], references: [id])
+  amount    Int
+  createdAt DateTime @default(now())
+}
+
+model SpotReservation {
+  id         String   @id @default(uuid())
+  listingId  String
+  listing    Listing  @relation(fields: [listingId], references: [id])
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  status     String
+  spotNumber Int?
+  heldUntil  DateTime
+  createdAt  DateTime @default(now())
+
+  @@unique([listingId, userId, status])
+}
+
+model WalletTransaction {
+  id                    String   @id @default(uuid())
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id])
+  type                  String
+  amountCents           Int
+  balanceAfter          Int
+  description           String
+  stripePaymentIntentId String?
+  metadata              Json?
+  createdAt             DateTime @default(now())
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  streamId  String
+  stream    Stream   @relation(fields: [streamId], references: [id])
+  userId    String
+  text      String
+  createdAt DateTime @default(now())
+}
+
+model Follow {
+  followerId String
+  follower   User   @relation("Follower", fields: [followerId], references: [id])
+  followedId String
+  followed   User   @relation("Followed", fields: [followedId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@id([followerId, followedId])
+}
