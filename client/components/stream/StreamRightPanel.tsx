@@ -237,7 +237,12 @@ export function StreamRightPanel({
   };
 
   return (
-    <div className={cn("flex flex-col h-full min-h-0", isDark && "text-white")}>
+    <div
+      className={cn(
+        "flex min-h-0 flex-1 flex-col overflow-hidden",
+        isDark && "text-white"
+      )}
+    >
       {headerSlot}
 
       {/* Tab strip */}

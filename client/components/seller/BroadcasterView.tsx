@@ -660,7 +660,7 @@ export function BroadcasterView({
             </div>
 
             {/* Mobile/Tablet: bottom rail to swap between Shop / Stats+Chat */}
-            <div className="lg:hidden flex flex-col flex-1 min-h-0 border-t border-white/10 bg-[#0F0F0F]">
+            <div className="lg:hidden flex min-h-0 flex-1 flex-col overflow-hidden border-t border-white/10 bg-[#0F0F0F]">
               <div className="flex shrink-0 border-b border-white/10">
                 {MOBILE_RAIL_TABS.map((p) => (
                   <button
@@ -678,7 +678,8 @@ export function BroadcasterView({
                   </button>
                 ))}
               </div>
-              <div className="flex-1 min-h-0 flex flex-col">
+              {/* Single bounded column so nested panels can scroll (flex + h-full chains break on tablets). */}
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 {mobileRail === "shop" ? shopPanel : rightPanel}
               </div>
             </div>
@@ -784,8 +785,8 @@ function ShopPanel({
   onAddProduct: () => void;
 }) {
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="p-3 border-b border-white/10 shrink-0">
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch] touch-pan-y">
+      <div className="shrink-0 border-b border-white/10 p-3">
         <p className="text-xs uppercase tracking-wider text-white/40 mb-2">Show</p>
         <p className="text-sm font-semibold truncate">{title}</p>
       </div>
@@ -830,7 +831,7 @@ function ShopPanel({
         </div>
       </div>
 
-      <div className="px-3 pb-3 shrink-0">
+      <div className="shrink-0 px-3 pb-3">
         <button
           type="button"
           disabled
@@ -842,7 +843,7 @@ function ShopPanel({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="min-h-0">
         {breaks.length === 0 ? (
           <div className="px-4 py-8 text-center">
             <p className="text-sm text-white/40 mb-2">
@@ -866,7 +867,7 @@ function ShopPanel({
         )}
       </div>
 
-      <div className="p-3 border-t border-white/10 shrink-0">
+      <div className="shrink-0 border-t border-white/10 bg-[#0F0F0F] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <button
           type="button"
           onClick={onAddProduct}
