@@ -5,6 +5,8 @@ import Redis from "ioredis";
 import { verifyAccessToken } from "../lib/jwt";
 import { handleChatMessage } from "./chat";
 import { JwtPayload } from "../types";
+import prisma from "../lib/prisma";
+import redis from "../lib/redis";
 
 export interface AuthenticatedSocket extends Socket {
   user?: JwtPayload;
@@ -45,21 +47,49 @@ export function setupWebSocket(httpServer: HttpServer) {
   });
 
   io.on("connection", (socket: AuthenticatedSocket) => {
-    // Join a stream room
+    // Join a stream room (validate stream exists and is live)
     socket.on("stream:join", async (streamId: string) => {
-      socket.join(`stream:${streamId}`);
-      // Store which stream this socket is in
-      (socket as any).streamId = streamId;
+      if (!streamId || typeof streamId !== "string") return;
+      try {
+        const stream = await prisma.stream.findUnique({ where: { id: streamId } });
+        if (!stream || stream.status !== "live") {
+          socket.emit("chat:error", { message: "Stream not available" });
+          return;
+        }
+        socket.join(`stream:${streamId}`);
+        (socket as any).streamId = streamId;
+
+        // Broadcast updated viewer count
+        const count = await redis.get(`stream:${streamId}:viewers`);
+        io.to(`stream:${streamId}`).emit("viewer:count", {
+          streamId,
+          count: count ? parseInt(count) : stream.viewerCount,
+        });
+      } catch {
+        // Stream lookup failed — still allow join for resilience
+        socket.join(`stream:${streamId}`);
+      }
     });
 
     // Leave a stream room
-    socket.on("stream:leave", (streamId: string) => {
+    socket.on("stream:leave", async (streamId: string) => {
       socket.leave(`stream:${streamId}`);
+      // Broadcast updated viewer count
+      try {
+        const count = await redis.get(`stream:${streamId}:viewers`);
+        if (count) {
+          io.to(`stream:${streamId}`).emit("viewer:count", {
+            streamId,
+            count: parseInt(count),
+          });
+        }
+      } catch {}
     });
 
     // Chat message
     socket.on("chat:send", async (data: { streamId: string; text: string }) => {
       if (!socket.user) return;
+      if (!data.streamId || typeof data.streamId !== "string") return;
       await handleChatMessage(io, socket as AuthenticatedSocket, data.streamId, data.text);
     });
 

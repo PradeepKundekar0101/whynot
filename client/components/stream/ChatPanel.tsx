@@ -66,7 +66,10 @@ export function ChatPanel({ streamId }: ChatPanelProps) {
     });
 
     socket.on("chat:message", (msg: ChatMessage) => {
-      setMessages((prev) => [...prev, msg]);
+      setMessages((prev) => {
+        const updated = [...prev, msg];
+        return updated.length > 200 ? updated.slice(-200) : updated;
+      });
     });
 
     socket.on("chat:error", (data: { message: string }) => {

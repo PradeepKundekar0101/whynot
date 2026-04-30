@@ -42,8 +42,14 @@ export async function handleChatMessage(
     }
   }
 
-  // Persist to database
+  // Verify stream is live before persisting
   try {
+    const stream = await prisma.stream.findUnique({ where: { id: streamId }, select: { status: true } });
+    if (!stream || stream.status !== "live") {
+      socket.emit("chat:error", { message: "Stream is not live" });
+      return;
+    }
+
     const message = await prisma.chatMessage.create({
       data: {
         streamId,
