@@ -8,6 +8,7 @@ import {
   useConnectionState,
   useRoomContext,
 } from "@livekit/components-react";
+import { useTrackMutedIndicator } from "@livekit/components-react/hooks";
 import { Track, ConnectionState, RoomEvent } from "livekit-client";
 import { useEffect, useState } from "react";
 import "@livekit/components-styles";
@@ -32,6 +33,8 @@ function VideoDisplay({
   const audioTracks = useTracks([Track.Source.Microphone], { onlySubscribed: true });
   const videoTrackRef = tracks[0];
   const audioTrackRef = audioTracks[0];
+  const { isMuted: sellerCameraMuted } = useTrackMutedIndicator(videoTrackRef);
+  const { isMuted: sellerMicMuted } = useTrackMutedIndicator(audioTrackRef);
 
   // Track number of remote participants so we can distinguish "seller hasn't published yet"
   // from "we're not actually connected".
@@ -107,8 +110,7 @@ function VideoDisplay({
   if (!videoTrackRef) {
     // Two reasons we can land here:
     //  1. Seller hasn't published any tracks yet (remoteCount === 0)
-    //  2. Seller is connected but turned their camera off — but they may still
-    //     be talking, so render the friendly avatar placeholder.
+    //  2. Seller is connected but never published camera
     if (remoteCount === 0 || !seller) {
       return (
         <div className="flex items-center justify-center h-full bg-black text-white text-sm">
@@ -124,8 +126,32 @@ function VideoDisplay({
         displayName={seller.displayName}
         username={seller.username}
         avatarUrl={seller.avatarUrl}
-        micOn={!!audioTrackRef && !audioTrackRef.publication?.isMuted}
+        micOn={!!audioTrackRef && !sellerMicMuted}
       />
+    );
+  }
+
+  // Camera publication can stay subscribed while muted — `<VideoTrack>` would paint black.
+  const hasLiveVideoFrames =
+    !sellerCameraMuted && videoTrackRef.publication?.track != null;
+
+  if (!hasLiveVideoFrames && seller) {
+    return (
+      <CameraOffPlaceholder
+        variant="buyer"
+        displayName={seller.displayName}
+        username={seller.username}
+        avatarUrl={seller.avatarUrl}
+        micOn={!!audioTrackRef && !sellerMicMuted}
+      />
+    );
+  }
+
+  if (!hasLiveVideoFrames) {
+    return (
+      <div className="flex items-center justify-center h-full bg-black text-white text-sm px-6 text-center">
+        Waiting for video...
+      </div>
     );
   }
 

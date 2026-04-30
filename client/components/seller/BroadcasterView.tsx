@@ -141,12 +141,17 @@ function BroadcasterControls({ buyerUrl }: { buyerUrl: string }) {
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled } = useLocalParticipant();
   const [busy, setBusy] = useState<"mic" | "camera" | null>(null);
   const [shareState, setShareState] = useState<"idle" | "copied" | "error">("idle");
+  const [mediaError, setMediaError] = useState<string | null>(null);
 
   const toggleMic = async () => {
     if (!localParticipant || busy === "mic") return;
     setBusy("mic");
     try {
       await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
+      setMediaError(null);
+    } catch (e) {
+      console.error(e);
+      setMediaError(e instanceof Error ? e.message : "Could not toggle microphone.");
     } finally {
       setBusy(null);
     }
@@ -157,6 +162,10 @@ function BroadcasterControls({ buyerUrl }: { buyerUrl: string }) {
     setBusy("camera");
     try {
       await localParticipant.setCameraEnabled(!isCameraEnabled);
+      setMediaError(null);
+    } catch (e) {
+      console.error(e);
+      setMediaError(e instanceof Error ? e.message : "Could not toggle camera.");
     } finally {
       setBusy(null);
     }
@@ -184,30 +193,40 @@ function BroadcasterControls({ buyerUrl }: { buyerUrl: string }) {
   };
 
   return (
-    <div className="absolute bottom-3 right-3 flex flex-col gap-2 pointer-events-auto">
+    <div className="absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2 pointer-events-auto">
+      {mediaError && (
+        <p
+          role="alert"
+          className="max-w-[14rem] rounded-lg bg-black/80 border border-white/15 text-amber-200 text-[11px] leading-snug px-2 py-1.5"
+        >
+          {mediaError}
+        </p>
+      )}
       <ControlButton
         onClick={toggleMic}
         disabled={busy === "mic"}
         active={!isMicrophoneEnabled}
-        label={isMicrophoneEnabled ? "Mute microphone" : "Unmute microphone"}
-        icon={isMicrophoneEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+        title={isMicrophoneEnabled ? "Mute microphone — buyers won't hear you" : "Unmute microphone"}
+        icon={isMicrophoneEnabled ? <Mic className="h-4 w-4 shrink-0" /> : <MicOff className="h-4 w-4 shrink-0" />}
+        caption={isMicrophoneEnabled ? "Mute" : "Unmute"}
       />
       <ControlButton
         onClick={toggleCamera}
         disabled={busy === "camera"}
         active={!isCameraEnabled}
-        label={isCameraEnabled ? "Turn off camera" : "Turn on camera"}
+        title={isCameraEnabled ? "Turn camera off" : "Turn camera on"}
         icon={
           isCameraEnabled ? (
-            <VideoIcon className="h-4 w-4" />
+            <VideoIcon className="h-4 w-4 shrink-0" />
           ) : (
-            <VideoOff className="h-4 w-4" />
+            <VideoOff className="h-4 w-4 shrink-0" />
           )
         }
+        caption={isCameraEnabled ? "Cam off" : "Cam on"}
       />
       <ControlButton
         onClick={share}
-        label={
+        title={
           shareState === "copied"
             ? "Buyer link copied"
             : shareState === "error"
@@ -216,12 +235,13 @@ function BroadcasterControls({ buyerUrl }: { buyerUrl: string }) {
         }
         icon={
           shareState === "copied" ? (
-            <Check className="h-4 w-4" />
+            <Check className="h-4 w-4 shrink-0" />
           ) : (
-            <Share2 className="h-4 w-4" />
+            <Share2 className="h-4 w-4 shrink-0" />
           )
         }
         flash={shareState !== "idle"}
+        caption="Share"
       />
     </div>
   );
@@ -232,35 +252,43 @@ function ControlButton({
   disabled,
   active,
   label,
+  title,
   icon,
   flash,
+  caption,
 }: {
   onClick: () => void;
   disabled?: boolean;
-  /** When true, the button shows a "destructive/active" state (e.g. mic muted). */
+  /** @deprecated Prefer `title` for tooltip (matches native `title` attr). */
+  label?: string;
+  title?: string;
+  /** When true, button shows a "destructive/active" state (e.g. mic muted). */
   active?: boolean;
-  label: string;
   icon: React.ReactNode;
   flash?: boolean;
+  /** Short label shown beside the icon (e.g. "Mute"). */
+  caption?: string;
 }) {
+  const tip = title ?? label;
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      title={label}
-      aria-label={label}
+      title={tip}
+      aria-label={tip}
       className={cn(
-        "p-2 rounded-full transition-colors text-white relative shadow-lg",
+        "inline-flex items-center gap-2 pl-2.5 pr-3 py-2 rounded-full transition-colors text-white shadow-lg",
         active
           ? "bg-red-500 hover:bg-red-600"
           : flash
             ? "bg-green-500 hover:bg-green-600"
-            : "bg-black/60 hover:bg-black/80",
+            : "bg-black/70 hover:bg-black/85 border border-white/10",
         disabled && "opacity-60 cursor-not-allowed"
       )}
     >
       {icon}
+      {caption && <span className="text-xs font-semibold leading-none">{caption}</span>}
     </button>
   );
 }
