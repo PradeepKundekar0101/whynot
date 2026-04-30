@@ -12,6 +12,7 @@ import chatRoutes from "./routes/chat";
 import listingRoutes from "./routes/listing";
 import { setupWebSocket } from "./websocket";
 import logger from "./lib/logger";
+import { startWorkers } from "./workers";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -51,4 +52,5 @@ setupWebSocket(httpServer);
 
 httpServer.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
+  startWorkers().catch((err) => logger.warn(err, "Failed to start workers"));
 });
