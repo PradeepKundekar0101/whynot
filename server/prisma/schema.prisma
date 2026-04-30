@@ -126,3 +126,9 @@ model Follow {
 
   @@id([followerId, followedId])
 }
+
+model ProcessedStripeEvent {
+  id        String   @id
+  type      String
+  createdAt DateTime @default(now())
+}
