@@ -13,14 +13,12 @@ interface Props {
 
 export function PersonalWinModal({ win, onClose }: Props) {
   if (!win) return null;
-  return <PersonalWinModalInner key={`${win.spotId}-${win.revealText}`} win={win} onClose={onClose} />;
+  return <PersonalWinModalInner key={`${win.spotId}-${win.revealedTeam}`} win={win} onClose={onClose} />;
 }
 
 function PersonalWinModalInner({ win, onClose }: { win: PersonalWin; onClose: () => void }) {
-  // Stable confetti trigger — only changes on (re)mount per spotId+revealText (parent keys us).
   const [confettiTrigger] = useState(() => Date.now());
 
-  // Fire the celebration sound when the modal first appears.
   useEffect(() => {
     try {
       playPersonalWinFanfare();
@@ -29,7 +27,6 @@ function PersonalWinModalInner({ win, onClose }: { win: PersonalWin; onClose: ()
     }
   }, []);
 
-  // ESC dismiss + backdrop click both handled here.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -56,16 +53,14 @@ function PersonalWinModalInner({ win, onClose }: { win: PersonalWin; onClose: ()
         <h1 className="text-3xl sm:text-4xl font-extrabold text-white">
           You got it!
         </h1>
-        <p className="text-sm text-white/70 mt-1">
-          {win.isRebroadcast ? "Replay" : "Live reveal"} for Spot #{win.spotNumber}
-        </p>
+        <p className="text-sm text-white/70 mt-1">Spot #{win.spotNumber}</p>
 
         <div className="mt-6 px-4 py-5 rounded-2xl bg-black/40 border border-primary/30">
           <p className="text-[10px] uppercase tracking-[0.2em] text-primary/80 mb-2">
-            Your reveal
+            Your team
           </p>
           <p className="text-3xl font-extrabold text-primary leading-tight reveal-bounce">
-            {win.revealText}
+            {win.revealedTeam}
           </p>
         </div>
 
@@ -94,6 +89,23 @@ function PersonalWinModalInner({ win, onClose }: { win: PersonalWin; onClose: ()
           }
           100% {
             transform: scale(1) translateY(0);
+            opacity: 1;
+          }
+        }
+        :global(.reveal-bounce) {
+          animation: reveal-bounce 600ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        @keyframes reveal-bounce {
+          0% {
+            transform: scale(0.6);
+            opacity: 0;
+          }
+          60% {
+            transform: scale(1.15);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(1);
             opacity: 1;
           }
         }

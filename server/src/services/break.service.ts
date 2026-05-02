@@ -1,5 +1,4 @@
 import crypto from "crypto";
-import type { Prisma } from "@prisma/client";
 import prisma from "../lib/prisma";
 import { isValidPreset, isValidShippingProfile, SPOT_PRESETS } from "../lib/spot-presets";
 import {
@@ -10,6 +9,16 @@ import {
   releaseLoserHolds,
 } from "./wallet-hold.service";
 import { recordSalePending } from "./earnings.service";
+
+/** Cryptographically random Fisher-Yates shuffle. Returns a new array. */
+export function shuffleArray<T>(items: readonly T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
 
 export class BreakError extends Error {
   context: Record<string, unknown>;
@@ -82,6 +91,26 @@ export async function createBreak(sellerId: string, input: CreateBreakInput) {
     }
   }
 
+  // For random+preset breaks, draw the shuffled team pool from the preset and
+  // assign each spot a team at creation time. The team is hidden from buyers
+  // (isRevealedToBuyers=false) until the auction-end auto-reveal flips it.
+  // For pick-your, every spot's preAssignedTeam mirrors its spotName and is
+  // visible from the start (isRevealedToBuyers=true).
+  let preAssignedPool: (string | null)[] = new Array(input.spots.length).fill(null);
+  if (input.breakFormat === "random") {
+    const presetKey = input.spotPreset;
+    if (presetKey && presetKey !== "custom" && isValidPreset(presetKey)) {
+      const pool = SPOT_PRESETS[presetKey];
+      if (pool.length < input.spots.length) {
+        throw new BreakError("PRESET_TOO_SMALL", { preset: presetKey, available: pool.length });
+      }
+      const shuffled = shuffleArray(pool).slice(0, input.spots.length);
+      preAssignedPool = shuffled;
+    }
+    // For random+custom we leave preAssignedTeam null; the seller will need to
+    // upgrade to a preset to get auto-reveal. This matches the prior fallback.
+  }
+
   const listing = await prisma.listing.create({
     data: {
       streamId: input.streamId,
@@ -98,12 +127,16 @@ export async function createBreak(sellerId: string, input: CreateBreakInput) {
       spots: {
         create: input.spots.map((s, i) => ({
           spotNumber: i + 1,
-          spotName: s.spotName.trim(),
+          // Random format: spotName stays "Spot #N" (the buyer-facing label).
+          // Pick-your: spotName is the team name.
+          spotName: input.breakFormat === "random" ? `Spot #${i + 1}` : s.spotName.trim(),
           description: s.description,
           startingPrice: s.startingPrice,
-          // For pick_your, the assigned name is just the spot name.
-          // For random, assignedName is filled in after the spin.
-          assignedName: input.breakFormat === "pick_your" ? s.spotName.trim() : null,
+          preAssignedTeam:
+            input.breakFormat === "pick_your" ? s.spotName.trim() : preAssignedPool[i],
+          // Pick-your spots are public from the start; random spots stay hidden
+          // until the auction-end auto-reveal pipeline flips this.
+          isRevealedToBuyers: input.breakFormat === "pick_your",
         })),
       },
     },
@@ -118,6 +151,7 @@ export async function listBreaksForStream(streamId: string) {
     where: { streamId },
     orderBy: { createdAt: "desc" },
     include: {
+      stream: { select: { id: true, sellerId: true } },
       spots: {
         orderBy: { spotNumber: "asc" },
         include: {
@@ -143,6 +177,183 @@ export async function getBreakById(listingId: string) {
       },
     },
   });
+}
+
+// ─── Serialization ────────────────────────────────────────────────────────
+
+interface RawSpot {
+  id: string;
+  listingId: string;
+  spotNumber: number;
+  spotName: string;
+  description: string | null;
+  startingPrice: number;
+  preAssignedTeam: string | null;
+  isRevealedToBuyers: boolean;
+  revealedAt: Date | null;
+  revealText: string | null;
+  auctionStatus: string;
+  auctionStartedAt: Date | null;
+  auctionEndsAt: Date | null;
+  startingBid: number | null;
+  currentBid: number | null;
+  bidCount: number;
+  highBidderId: string | null;
+  highBidder?: { id: string; username: string; avatarUrl: string | null } | null;
+  suddenDeath: boolean;
+  counterBidTime: number;
+  initialDuration: number;
+  winnerId: string | null;
+  winner?: { id: string; username: string; avatarUrl: string | null } | null;
+  soldPrice: number | null;
+  soldAt: Date | null;
+  createdAt: Date;
+}
+
+export interface SerializedSpot {
+  id: string;
+  listingId: string;
+  spotNumber: number;
+  spotName: string;
+  description: string | null;
+  startingPrice: number;
+  /**
+   * The team behind this spot, surfaced ONLY when:
+   *   - the caller is the seller, OR
+   *   - the caller is the winner of this spot, OR
+   *   - the spot has been publicly revealed (isRevealedToBuyers=true).
+   * For everyone else this is null even though preAssignedTeam exists in the DB.
+   */
+  revealedTeam: string | null;
+  isRevealedToBuyers: boolean;
+  revealedAt: string | null;
+  auctionStatus: string;
+  auctionStartedAt: string | null;
+  auctionEndsAt: string | null;
+  startingBid: number | null;
+  currentBid: number | null;
+  bidCount: number;
+  highBidderId: string | null;
+  highBidder: { id: string; username: string; avatarUrl: string | null } | null;
+  suddenDeath: boolean;
+  counterBidTime: number;
+  initialDuration: number;
+  winnerId: string | null;
+  winner: { id: string; username: string; avatarUrl: string | null } | null;
+  soldPrice: number | null;
+  soldAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * Strip server-only fields (currently `preAssignedTeam`) from a Spot row before
+ * sending it to a non-seller buyer. The team only appears in `revealedTeam`
+ * when the spot has actually been revealed or the caller won it.
+ *
+ * `viewerUserId` is the caller's user id (or null for anonymous). `isSeller`
+ * skips all gating — sellers always see what's coming up next.
+ */
+export function serializeSpot(
+  spot: RawSpot,
+  viewerUserId: string | null,
+  isSeller: boolean
+): SerializedSpot {
+  const isWinner = !!viewerUserId && spot.winnerId === viewerUserId;
+  const canSeeTeam = isSeller || isWinner || spot.isRevealedToBuyers;
+  const revealedTeam = canSeeTeam ? spot.preAssignedTeam ?? spot.revealText ?? null : null;
+
+  return {
+    id: spot.id,
+    listingId: spot.listingId,
+    spotNumber: spot.spotNumber,
+    spotName: spot.spotName,
+    description: spot.description,
+    startingPrice: spot.startingPrice,
+    revealedTeam,
+    isRevealedToBuyers: spot.isRevealedToBuyers,
+    revealedAt: spot.revealedAt?.toISOString() ?? null,
+    auctionStatus: spot.auctionStatus,
+    auctionStartedAt: spot.auctionStartedAt?.toISOString() ?? null,
+    auctionEndsAt: spot.auctionEndsAt?.toISOString() ?? null,
+    startingBid: spot.startingBid,
+    currentBid: spot.currentBid,
+    bidCount: spot.bidCount,
+    highBidderId: spot.highBidderId,
+    highBidder: spot.highBidder ?? null,
+    suddenDeath: spot.suddenDeath,
+    counterBidTime: spot.counterBidTime,
+    initialDuration: spot.initialDuration,
+    winnerId: spot.winnerId,
+    winner: spot.winner ?? null,
+    soldPrice: spot.soldPrice,
+    soldAt: spot.soldAt?.toISOString() ?? null,
+    createdAt: spot.createdAt.toISOString(),
+  };
+}
+
+interface RawBreak {
+  id: string;
+  streamId: string;
+  type: string;
+  breakName: string;
+  breakDescription: string | null;
+  sellingMode: string;
+  breakFormat: string;
+  spotPreset: string | null;
+  shippingProfile: string;
+  status: string;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  autoRandomize: boolean;
+  quickSpin: boolean;
+  createdAt: Date;
+  spots: RawSpot[];
+  stream?: { id: string; sellerId: string };
+}
+
+export interface SerializedBreak {
+  id: string;
+  streamId: string;
+  type: string;
+  breakName: string;
+  breakDescription: string | null;
+  sellingMode: string;
+  breakFormat: string;
+  spotPreset: string | null;
+  shippingProfile: string;
+  status: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  autoRandomize: boolean;
+  quickSpin: boolean;
+  createdAt: string;
+  spots: SerializedSpot[];
+}
+
+export function serializeBreak(
+  brk: RawBreak,
+  viewerUserId: string | null,
+  sellerId?: string | null
+): SerializedBreak {
+  const isSeller = !!viewerUserId && (sellerId ?? brk.stream?.sellerId) === viewerUserId;
+  return {
+    id: brk.id,
+    streamId: brk.streamId,
+    type: brk.type,
+    breakName: brk.breakName,
+    breakDescription: brk.breakDescription,
+    sellingMode: brk.sellingMode,
+    breakFormat: brk.breakFormat,
+    spotPreset: brk.spotPreset,
+    shippingProfile: brk.shippingProfile,
+    status: brk.status,
+    startedAt: brk.startedAt?.toISOString() ?? null,
+    completedAt: brk.completedAt?.toISOString() ?? null,
+    autoRandomize: brk.autoRandomize,
+    quickSpin: brk.quickSpin,
+    createdAt: brk.createdAt.toISOString(),
+    spots: brk.spots.map((s) => serializeSpot(s, viewerUserId, isSeller)),
+  };
 }
 
 /**
@@ -479,8 +690,6 @@ export async function buyNowSpot(spotId: string, buyerId: string) {
         soldPrice: price,
         soldAt: new Date(),
         auctionStatus: "ended",
-        // Pick-your: assignedName is already the spotName from creation.
-        // Random: assignedName remains null until a spin runs.
       },
     });
 
@@ -559,8 +768,6 @@ export async function endSpotAuction(spotId: string) {
       soldPriceCents: soldPrice ?? 0,
     });
 
-    // Pick-your: assignedName already mirrors spotName (set at creation).
-    // Random: assignedName stays null until the spin runs.
     const updated = await tx.spot.update({
       where: { id: spotId },
       data: {
@@ -587,76 +794,3 @@ export async function endSpotAuction(spotId: string) {
   });
 }
 
-/**
- * Run the spin for a single random-format spot. Picks a random un-assigned name
- * from the break's pool. Returns the assigned name (caller broadcasts the events).
- *
- * If the break uses spotPreset='custom' we assign the spot's own spotName as a
- * sensible fallback (since there's no preset pool to pick from); custom random
- * breaks are uncommon but we shouldn't crash on them.
- */
-export async function pickRandomAssignment(spotId: string) {
-  const spot = await prisma.spot.findUnique({
-    where: { id: spotId },
-    include: { listing: { select: { id: true, spotPreset: true, breakFormat: true } } },
-  });
-  if (!spot) throw new BreakError("SPOT_NOT_FOUND");
-  if (spot.listing.breakFormat !== "random") throw new BreakError("NOT_RANDOM_FORMAT");
-  if (spot.assignedName) return { assignedName: spot.assignedName, candidates: [] as string[] };
-
-  const presetKey = spot.listing.spotPreset;
-  let pool: string[];
-  if (presetKey && presetKey !== "custom" && isValidPreset(presetKey)) {
-    pool = [...SPOT_PRESETS[presetKey]];
-  } else {
-    // Fallback: pool is the set of all spotNames in the break (e.g., user-defined teams)
-    const allSpots = await prisma.spot.findMany({
-      where: { listingId: spot.listing.id },
-      select: { spotName: true },
-    });
-    pool = allSpots.map((s) => s.spotName);
-  }
-
-  const usedSpots = await prisma.spot.findMany({
-    where: { listingId: spot.listing.id, assignedName: { not: null } },
-    select: { assignedName: true },
-  });
-  const used = new Set(usedSpots.map((s) => s.assignedName!));
-
-  const available = pool.filter((p) => !used.has(p));
-  if (available.length === 0) {
-    // No options left — assign to the spotName as a fallback (shouldn't happen with a proper preset).
-    return { assignedName: spot.spotName, candidates: pool };
-  }
-
-  const idx = crypto.randomInt(0, available.length);
-  const assignedName = available[idx];
-  return { assignedName, candidates: available };
-}
-
-export async function commitSpinAssignment(spotId: string, assignedName: string) {
-  return prisma.spot.update({
-    where: { id: spotId },
-    data: { assignedName, spinPlayedAt: new Date() },
-    include: { winner: { select: { id: true, username: true, avatarUrl: true } } },
-  });
-}
-
-/**
- * Are all spots in the break either ended or skipped? If yes, mark the listing 'completed'.
- */
-export async function maybeCompleteBreak(listingId: string) {
-  const remaining = await prisma.spot.count({
-    where: {
-      listingId,
-      auctionStatus: { notIn: ["ended", "skipped"] },
-      winnerId: null,
-    },
-  });
-  if (remaining > 0) return null;
-
-  return prisma.listing.update({
-    where: { id: listingId },
-    data: { status: "completed", completedAt: new Date() },
-  });
-}

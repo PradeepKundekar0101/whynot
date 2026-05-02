@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import { z } from "zod";
 import { authenticate } from "../middleware/authenticate";
+import { tryAuthenticate } from "../middleware/try-authenticate";
 import { AuthenticatedRequest } from "../types";
 import {
   BreakError,
@@ -8,6 +9,7 @@ import {
   createBreak,
   getBreakById,
   listBreaksForStream,
+  serializeBreak,
 } from "../services/break.service";
 import { emitToStream } from "../websocket/emitter";
 import { paramAsString } from "../lib/express-params";
@@ -45,6 +47,7 @@ const ERROR_MAP: Record<string, { status: number; message: string }> = {
   EMPTY_SPOT_NAME: { status: 400, message: "Spot names cannot be empty" },
   DUPLICATE_SPOT_NAME: { status: 400, message: "Duplicate spot name" },
   INVALID_STARTING_PRICE: { status: 400, message: "Each spot needs a starting price of at least $0.01" },
+  PRESET_TOO_SMALL: { status: 400, message: "The preset doesn't have enough teams for this number of spots" },
   BREAK_NOT_FOUND: { status: 404, message: "Break not found" },
   BREAK_ALREADY_COMPLETED: { status: 409, message: "Break already completed" },
 };
@@ -76,24 +79,26 @@ router.get("/presets", (_req, res) => {
 });
 
 // GET /api/breaks/stream/:streamId — list all breaks (with their spots) in a stream
-router.get("/stream/:streamId", async (req, res) => {
+router.get("/stream/:streamId", tryAuthenticate, async (req: AuthenticatedRequest, res) => {
   try {
     const breaks = await listBreaksForStream(paramAsString(req.params.streamId));
-    res.json({ breaks });
+    const viewerId = req.user?.userId ?? null;
+    res.json({ breaks: breaks.map((b) => serializeBreak(b, viewerId)) });
   } catch (err) {
     handleError(res, err);
   }
 });
 
 // GET /api/breaks/:id — single break with spots
-router.get("/:id", async (req, res) => {
+router.get("/:id", tryAuthenticate, async (req: AuthenticatedRequest, res) => {
   try {
     const data = await getBreakById(paramAsString(req.params.id));
     if (!data) {
       res.status(404).json({ error: { code: "NOT_FOUND", message: "Break not found" } });
       return;
     }
-    res.json({ break: data });
+    const viewerId = req.user?.userId ?? null;
+    res.json({ break: serializeBreak(data, viewerId, data.stream.sellerId) });
   } catch (err) {
     handleError(res, err);
   }
@@ -121,8 +126,21 @@ router.post(
 
     try {
       const listing = await createBreak(req.user!.userId, parsed.data);
-      emitToStream(listing.streamId, "break:created", { listing });
-      res.status(201).json({ break: listing });
+      const sellerId = req.user!.userId;
+      const sellerView = serializeBreak(
+        { ...listing, stream: { id: listing.streamId, sellerId } },
+        sellerId,
+        sellerId
+      );
+      // Buyer-safe broadcast (no preAssignedTeam leak for random spots).
+      // Re-serialize with viewerId=null so the team gates apply.
+      const buyerView = serializeBreak(
+        { ...listing, stream: { id: listing.streamId, sellerId } },
+        null,
+        sellerId
+      );
+      emitToStream(listing.streamId, "break:created", { listing: buyerView });
+      res.status(201).json({ break: sellerView });
     } catch (err) {
       handleError(res, err);
     }

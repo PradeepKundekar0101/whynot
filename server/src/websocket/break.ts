@@ -9,19 +9,11 @@ import {
   startSpotAuction,
   skipSpotAuction,
 } from "../services/break.service";
-import {
-  confirmReveal,
-  maybeStartReveal,
-  rebroadcastReveal,
-  skipReveal,
-  startReveal,
-  togglePin,
-} from "../services/reveal.service";
+import { scheduleAutoReveal, maybeCompleteBreak } from "../services/reveal.service";
 import { emitSystemEvent } from "../services/chat-events.service";
 import { broadcastStreamStats } from "../services/stream-stats.service";
 import prisma from "../lib/prisma";
 import logger from "../lib/logger";
-import { runSpin } from "../workers/end-spot-auctions";
 import { AuthenticatedSocket } from "./index";
 
 let bidLimiter: RateLimiterRedis | null = null;
@@ -72,11 +64,6 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_COUNTER_BID_TIME: "Counter-bid time must be 2, 3, 5, 7, or 10 seconds.",
   INVALID_DURATION: "Auction duration is invalid.",
   INVALID_STARTING_PRICE: "Starting price must be at least 1 cent.",
-  BREAK_NOT_REVEALING: "This break isn't in reveal mode.",
-  SPOT_NOT_REVEALABLE: "This spot isn't ready to be revealed.",
-  EMPTY_REVEAL_TEXT: "Reveal text can't be empty.",
-  REVEAL_TEXT_TOO_LONG: "Reveal text must be 120 characters or fewer.",
-  SPOT_NOT_REVEALED: "This spot hasn't been revealed yet.",
 };
 
 function ackError(ack: Ack, err: unknown) {
@@ -94,14 +81,6 @@ async function streamIdForSpot(spotId: string): Promise<string | null> {
     select: { listing: { select: { streamId: true } } },
   });
   return spot?.listing.streamId ?? null;
-}
-
-async function streamIdForListing(listingId: string): Promise<string | null> {
-  const listing = await prisma.listing.findUnique({
-    where: { id: listingId },
-    select: { streamId: true },
-  });
-  return listing?.streamId ?? null;
 }
 
 export function registerBreakHandlers(io: Server, socket: AuthenticatedSocket) {
@@ -189,6 +168,7 @@ export function registerBreakHandlers(io: Server, socket: AuthenticatedSocket) {
     try {
       const result = await buyNowSpot(data.spotId, socket.user.userId);
 
+      // Legacy spot:purchased event (still useful for spot-list refreshes).
       io.to(`stream:${result.streamId}`).emit("spot:purchased", {
         spotId: result.spot.id,
         listingId: result.listingId,
@@ -198,13 +178,23 @@ export function registerBreakHandlers(io: Server, socket: AuthenticatedSocket) {
         soldPrice: result.spot.soldPrice ?? 0,
       });
 
-      // Buyer's wallet is now lower — push them their fresh balance privately.
+      // Win toast — same shape as the auction-ended toast so the client overlay
+      // doesn't have to branch on selling mode.
+      io.to(`stream:${result.streamId}`).emit("spot:won", {
+        spotId: result.spot.id,
+        listingId: result.listingId,
+        spotNumber: result.spot.spotNumber,
+        winnerId: result.buyerId,
+        winnerUsername: result.buyerUsername,
+        winnerAvatarUrl: result.buyerAvatarUrl,
+        soldPrice: result.spot.soldPrice ?? 0,
+      });
+
       io.to(`stream:${result.streamId}`).emit("wallet:balance_updated", {
         userId: result.buyerId,
         newBalance: result.newBalance,
       });
 
-      // System chat event: spot purchased + live stats refresh
       void emitSystemEvent(result.streamId, {
         eventType: "spot_purchased",
         spotId: result.spot.id,
@@ -217,11 +207,8 @@ export function registerBreakHandlers(io: Server, socket: AuthenticatedSocket) {
         logger.error(err, "broadcastStreamStats failed")
       );
 
-      // After every successful Buy It Now claim, check if the break is ready
-      // to enter the randomizing → revealing pipeline.
-      void maybeStartReveal(result.listingId).catch((err) =>
-        logger.error(err, "maybeStartReveal failed")
-      );
+      // Schedule the T+3s auto-reveal on the same spot.
+      scheduleAutoReveal(result.spot.id);
 
       ack({ ok: true });
     } catch (err) {
@@ -316,112 +303,10 @@ export function registerBreakHandlers(io: Server, socket: AuthenticatedSocket) {
       if (streamId) {
         io.to(`stream:${streamId}`).emit("spot:skipped", { spotId: updated.id });
       }
-      ack({ ok: true });
-    } catch (err) {
-      ackError(ack, err);
-    }
-  });
-
-  // ─── Seller: trigger spin manually (random format, autoRandomize=off) ────
-  socket.on("seller:trigger_spin", async (data: { spotId?: string }, rawAck) => {
-    const ack = safeAck(rawAck);
-    if (!socket.user) return ack({ ok: false, error: "UNAUTHENTICATED" });
-    if (!data?.spotId) return ack({ ok: false, error: "SPOT_NOT_FOUND" });
-
-    try {
-      const spot = await prisma.spot.findUnique({
-        where: { id: data.spotId },
-        include: { listing: { select: { stream: { select: { sellerId: true, id: true } } } } },
-      });
-      if (!spot) return ack({ ok: false, error: "SPOT_NOT_FOUND" });
-      if (spot.listing.stream.sellerId !== socket.user.userId) {
-        return ack({ ok: false, error: "NOT_AUTHORIZED" });
-      }
-
-      ack({ ok: true });
-      void runSpin(spot.id, spot.listing.stream.id).catch((err) =>
-        logger.error(err, "Manual spin failed")
+      // Skipping might be the last blocker — see if the break can complete.
+      void maybeCompleteBreak(updated.listingId).catch((err) =>
+        logger.error(err, "maybeCompleteBreak failed after skip")
       );
-    } catch (err) {
-      ackError(ack, err);
-    }
-  });
-
-  // ─── Seller: randomize all (deferred — UI button shown but disabled) ────
-  socket.on("seller:randomize_all", async (data: { listingId?: string }, rawAck) => {
-    const ack = safeAck(rawAck);
-    if (!data?.listingId) return ack({ ok: false, error: "BREAK_NOT_FOUND" });
-    const streamId = await streamIdForListing(data.listingId);
-    // Intentional no-op for now; UI will surface a tooltip. Acknowledge with a
-    // friendly error so the client can show "coming soon" toast if it wants.
-    if (streamId) {
-      // no broadcast
-    }
-    ack({ ok: false, error: "NOT_IMPLEMENTED", message: "Randomize All is coming soon." });
-  });
-
-  // ─── Seller: start revealing a spot ─────────────────────────────────────
-  socket.on("seller:start_reveal", async (data: { spotId?: string }, rawAck) => {
-    const ack = safeAck(rawAck);
-    if (!socket.user) return ack({ ok: false, error: "UNAUTHENTICATED" });
-    if (!data?.spotId) return ack({ ok: false, error: "SPOT_NOT_FOUND" });
-    try {
-      await startReveal(data.spotId, socket.user.userId);
-      ack({ ok: true });
-    } catch (err) {
-      ackError(ack, err);
-    }
-  });
-
-  // ─── Seller: confirm a reveal ───────────────────────────────────────────
-  socket.on(
-    "seller:confirm_reveal",
-    async (data: { spotId?: string; revealText?: string }, rawAck) => {
-      const ack = safeAck(rawAck);
-      if (!socket.user) return ack({ ok: false, error: "UNAUTHENTICATED" });
-      if (!data?.spotId) return ack({ ok: false, error: "SPOT_NOT_FOUND" });
-      try {
-        await confirmReveal(data.spotId, socket.user.userId, data.revealText ?? "");
-        ack({ ok: true });
-      } catch (err) {
-        ackError(ack, err);
-      }
-    }
-  );
-
-  // ─── Seller: skip a reveal (postpone) ───────────────────────────────────
-  socket.on("seller:skip_reveal", async (data: { spotId?: string }, rawAck) => {
-    const ack = safeAck(rawAck);
-    if (!socket.user) return ack({ ok: false, error: "UNAUTHENTICATED" });
-    if (!data?.spotId) return ack({ ok: false, error: "SPOT_NOT_FOUND" });
-    try {
-      await skipReveal(data.spotId, socket.user.userId);
-      ack({ ok: true });
-    } catch (err) {
-      ackError(ack, err);
-    }
-  });
-
-  // ─── Seller: pin/unpin a spot in the reveal queue ───────────────────────
-  socket.on("seller:toggle_pin", async (data: { spotId?: string }, rawAck) => {
-    const ack = safeAck(rawAck);
-    if (!socket.user) return ack({ ok: false, error: "UNAUTHENTICATED" });
-    if (!data?.spotId) return ack({ ok: false, error: "SPOT_NOT_FOUND" });
-    try {
-      await togglePin(data.spotId, socket.user.userId);
-      ack({ ok: true });
-    } catch (err) {
-      ackError(ack, err);
-    }
-  });
-
-  // ─── Seller: re-broadcast a previous reveal (replay confetti) ───────────
-  socket.on("seller:rebroadcast_reveal", async (data: { spotId?: string }, rawAck) => {
-    const ack = safeAck(rawAck);
-    if (!socket.user) return ack({ ok: false, error: "UNAUTHENTICATED" });
-    if (!data?.spotId) return ack({ ok: false, error: "SPOT_NOT_FOUND" });
-    try {
-      await rebroadcastReveal(data.spotId, socket.user.userId);
       ack({ ok: true });
     } catch (err) {
       ackError(ack, err);

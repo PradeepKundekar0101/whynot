@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import type { Socket } from "socket.io-client";
 import {
   Play,
-  Zap,
   Pin,
   Pencil,
   Trash2,
@@ -12,7 +11,11 @@ import {
   ChevronDown,
   Sparkles,
   Hourglass,
+  Trophy,
+  ShoppingBag,
+  Zap,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { formatCents } from "@/lib/break-format";
 import type { Break, Spot, AckResponse } from "@/lib/break-types";
@@ -33,17 +36,30 @@ function emit<T>(socket: Socket | null, event: string, data: T): Promise<AckResp
   });
 }
 
+/**
+ * Seller-side control panel for a single break. Reveals are fully automatic
+ * (handled by the auction-end pipeline + scheduleAutoReveal on the server),
+ * so this panel never shows a manual "Reveal Mode" UI; it's always the
+ * auction-running surface.
+ *
+ * For random-format breaks the seller still sees `revealedTeam` for every
+ * spot — the API serializer surfaces it for sellers — so they can see what's
+ * coming up next even before buyers do.
+ */
 export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps) {
+  const router = useRouter();
   const [auctionTarget, setAuctionTarget] = useState<Spot | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState<string | null>(null);
-  const [openSection, setOpenSection] = useState<{ available: boolean; awaiting: boolean; assigned: boolean }>(
-    { available: true, awaiting: true, assigned: true }
+  const [openSection, setOpenSection] = useState<{ available: boolean; sold: boolean }>(
+    { available: true, sold: true }
   );
 
   const totalSpots = brk.spots.length;
   const sold = brk.spots.filter((s) => s.winnerId).length;
   const remaining = totalSpots - sold;
+  const totalSalesCents = brk.spots.reduce((sum, s) => sum + (s.soldPrice ?? 0), 0);
+  const uniqueBuyers = new Set(brk.spots.map((s) => s.winnerId).filter(Boolean)).size;
 
   const upNextSpot = useMemo(() => {
     return brk.spots.find((s) => s.auctionStatus === "active") ??
@@ -53,13 +69,7 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
   const availableSpots = brk.spots.filter(
     (s) => s.auctionStatus === "pending" || s.auctionStatus === "active"
   );
-  const awaitingAssignment = brk.spots.filter(
-    (s) =>
-      brk.breakFormat === "random" &&
-      s.winnerId &&
-      !s.assignedName
-  );
-  const assigned = brk.spots.filter((s) => s.winnerId && (brk.breakFormat === "pick_your" || s.assignedName));
+  const soldSpots = brk.spots.filter((s) => s.winnerId);
 
   const handleStartBreaking = async () => {
     const ok = window.confirm(
@@ -100,19 +110,76 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
     if (!ack.ok) setActionError(ack.message ?? ack.error);
   };
 
-  const handleManualSpin = async (spot: Spot) => {
-    setActionPending(`spin-${spot.id}`);
-    const ack = await emit(socket, "seller:trigger_spin", { spotId: spot.id });
-    setActionPending(null);
-    if (!ack.ok) setActionError(ack.message ?? ack.error);
-  };
+  // Completion summary — the break is done.
+  if (brk.status === "completed") {
+    return (
+      <div className="flex flex-col h-full text-white p-4">
+        <div className="flex flex-col items-center text-center mt-2 mb-6">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-primary text-primary-foreground mb-3 shadow-[0_0_30px_rgba(255,214,0,0.5)]">
+            <Trophy className="h-7 w-7" />
+          </div>
+          <h2 className="text-xl font-bold">Break Complete!</h2>
+          <p className="text-sm text-white/60 mt-1">
+            {sold} {sold === 1 ? "spot" : "spots"} sold to {uniqueBuyers}{" "}
+            {uniqueBuyers === 1 ? "buyer" : "buyers"}
+          </p>
+        </div>
 
-  const handleRandomizeAll = async () => {
-    setActionPending("randomize-all");
-    const ack = await emit(socket, "seller:randomize_all", { listingId: brk.id });
-    setActionPending(null);
-    if (!ack.ok) setActionError(ack.message ?? ack.error);
-  };
+        <div className="grid grid-cols-2 gap-2 mb-6">
+          <div className="rounded-lg bg-white/5 border border-white/10 p-3 text-center">
+            <p className="text-[10px] uppercase tracking-wider text-white/50">Total Sales</p>
+            <p className="text-xl font-bold text-primary mt-0.5">{formatCents(totalSalesCents)}</p>
+          </div>
+          <div className="rounded-lg bg-white/5 border border-white/10 p-3 text-center">
+            <p className="text-[10px] uppercase tracking-wider text-white/50">Sold</p>
+            <p className="text-xl font-bold mt-0.5">
+              {sold}
+              <span className="text-white/30 text-base">/{totalSpots}</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2 mb-6">
+          <button
+            type="button"
+            onClick={() => router.push("/seller/earnings")}
+            className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-lg bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-colors"
+          >
+            <ShoppingBag className="h-4 w-4" />
+            View Earnings
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent("seller:open-create-break"));
+            }}
+            className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-lg border border-white/15 text-sm font-medium hover:bg-white/5 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            Create Another Break
+          </button>
+        </div>
+
+        {soldSpots.length > 0 && (
+          <div className="rounded-lg border border-white/10 bg-black/20 max-h-72 overflow-y-auto">
+            <p className="px-3 py-2 text-xs uppercase tracking-wider text-white/50 border-b border-white/10">
+              Sold ({soldSpots.length})
+            </p>
+            {soldSpots.map((s) => (
+              <div key={s.id} className="px-3 py-2 border-b border-white/5">
+                <p className="text-xs text-white/50">
+                  Spot #{s.spotNumber} → @{s.winner?.username ?? "?"}
+                </p>
+                <p className="text-sm font-semibold text-primary truncate">
+                  {s.revealedTeam ?? s.spotName}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full text-white">
@@ -166,7 +233,13 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
           <p className="text-[11px] uppercase tracking-wider text-white/50 mb-2">Up Next</p>
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
             <p className="text-sm font-semibold">{upNextSpot.spotName}</p>
-            <p className="text-xs text-white/50">{sold} of {totalSpots} sold</p>
+            {/* For random format, show the seller what team is hiding behind this spot. */}
+            {brk.breakFormat === "random" && upNextSpot.revealedTeam && (
+              <p className="text-xs text-primary font-semibold mt-0.5">
+                Hidden team: {upNextSpot.revealedTeam}
+              </p>
+            )}
+            <p className="text-xs text-white/50 mt-0.5">{sold} of {totalSpots} sold</p>
             <div className="mt-2 flex items-center gap-2">
               {upNextSpot.auctionStatus === "active" ? (
                 <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-red-500/15 text-red-400 font-semibold">
@@ -187,25 +260,6 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
               )}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Randomize All (random format only) */}
-      {brk.breakFormat === "random" && (
-        <div className="px-3 py-3 border-b border-white/10">
-          <button
-            type="button"
-            onClick={handleRandomizeAll}
-            disabled
-            title="Coming soon"
-            className="w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg border border-white/10 text-xs font-medium text-white/40 cursor-not-allowed"
-          >
-            <Zap className="h-3 w-3" />
-            Randomize All
-            <span className="text-[10px] uppercase tracking-wider px-1.5 py-px rounded bg-white/10 text-white/50">
-              Soon
-            </span>
-          </button>
         </div>
       )}
 
@@ -233,6 +287,7 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
             <SpotRow
               key={spot.id}
               spot={spot}
+              showHiddenTeam={brk.breakFormat === "random"}
               onStartAuction={brk.sellingMode === "auction" ? handleStartAuction : undefined}
               onSkip={handleSkipSpot}
               actionPending={actionPending}
@@ -241,70 +296,34 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
         )}
       </Section>
 
-      {/* Awaiting Assignment (random format) */}
-      {brk.breakFormat === "random" && (
-        <Section
-          title="Awaiting Assignment"
-          count={awaitingAssignment.length}
-          open={openSection.awaiting}
-          onToggle={() => setOpenSection((s) => ({ ...s, awaiting: !s.awaiting }))}
-        >
-          {awaitingAssignment.length === 0 ? (
-            <p className="text-xs text-white/40 px-3 py-2">Nothing waiting.</p>
-          ) : (
-            awaitingAssignment.map((spot) => (
-              <div
-                key={spot.id}
-                className="px-3 py-2 flex items-center justify-between gap-2 border-b border-white/5"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{spot.spotName}</p>
-                  <p className="text-xs text-white/50 truncate">
-                    Won by @{spot.winner?.username} · {formatCents(spot.soldPrice ?? 0)}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleManualSpin(spot)}
-                  disabled={actionPending === `spin-${spot.id}`}
-                  className="inline-flex items-center gap-1 h-8 px-3 rounded-md text-xs font-semibold bg-primary text-primary-foreground disabled:opacity-60"
-                >
-                  <Sparkles className="h-3 w-3" />
-                  Spin
-                </button>
-              </div>
-            ))
-          )}
-        </Section>
-      )}
-
-      {/* Assigned */}
+      {/* Sold */}
       <Section
-        title="Assigned"
-        count={assigned.length}
-        open={openSection.assigned}
-        onToggle={() => setOpenSection((s) => ({ ...s, assigned: !s.assigned }))}
+        title="Sold"
+        count={soldSpots.length}
+        open={openSection.sold}
+        onToggle={() => setOpenSection((s) => ({ ...s, sold: !s.sold }))}
       >
-        {assigned.length === 0 ? (
+        {soldSpots.length === 0 ? (
           <p className="text-xs text-white/40 px-3 py-2">No spots sold yet.</p>
         ) : (
-          assigned.map((spot) => (
-            <div
-              key={spot.id}
-              className="px-3 py-2 border-b border-white/5"
-            >
+          soldSpots.map((spot) => (
+            <div key={spot.id} className="px-3 py-2 border-b border-white/5">
               <p className="text-sm font-medium truncate">
-                {spot.assignedName ?? spot.spotName}
+                {spot.revealedTeam ?? spot.spotName}
               </p>
               <p className="text-xs text-white/50 truncate">
                 @{spot.winner?.username} · {formatCents(spot.soldPrice ?? 0)}
+                {!spot.isRevealedToBuyers && (
+                  <span className="ml-2 text-[10px] uppercase tracking-wider text-amber-400">
+                    Pending reveal
+                  </span>
+                )}
               </p>
             </div>
           ))
         )}
       </Section>
 
-      {/* Add Team placeholder */}
       <div className="mt-auto px-3 py-3 border-t border-white/10">
         <button
           type="button"
@@ -361,11 +380,13 @@ function Section({
 
 function SpotRow({
   spot,
+  showHiddenTeam,
   onStartAuction,
   onSkip,
   actionPending,
 }: {
   spot: Spot;
+  showHiddenTeam: boolean;
   onStartAuction?: (spot: Spot) => void;
   onSkip: (spot: Spot) => void;
   actionPending: string | null;
@@ -381,6 +402,13 @@ function SpotRow({
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-medium truncate">{spot.spotName}</p>
+          {/* Sellers see the hidden team (random format) so they know what's
+              about to be sold. Buyers never see this until reveal. */}
+          {showHiddenTeam && spot.revealedTeam && (
+            <p className="text-[11px] text-primary font-semibold truncate">
+              {spot.revealedTeam}
+            </p>
+          )}
           <p className="text-xs text-white/50">
             Starting {formatCents(spot.startingPrice)}
             {spot.currentBid ? ` · ${formatCents(spot.currentBid)}` : ""}

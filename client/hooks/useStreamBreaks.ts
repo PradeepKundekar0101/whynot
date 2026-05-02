@@ -6,59 +6,49 @@ import { apiFetch } from "@/lib/api";
 import type {
   Break,
   Spot,
-  SpotAssignedEvent,
   SpotAuctionEndedEvent,
   SpotAuctionStartedEvent,
   SpotBidPlacedEvent,
   SpotPurchasedEvent,
-  SpotSpinCompletedEvent,
-  SpotSpinStartedEvent,
-  SpotRevealStartedEvent,
+  SpotWonEvent,
   SpotRevealedEvent,
-  SpotRevealSkippedEvent,
-  BreakRandomizingEvent,
   BreakCompletedEvent,
-  SpotReorderEvent,
 } from "@/lib/break-types";
 
-export interface ActiveSpin {
-  spotId: string;
-  listingId: string;
-  candidates: string[];
-  quickSpin: boolean;
-  /** Set when the spin completes — used to drive the final reveal. */
-  resolvedName: string | null;
-  winnerId: string | null;
-  winnerUsername: string | null;
-  /** Server-confirmed deadline so we know when to remove the overlay even if completed event is missed. */
-  startedAtMs: number;
-}
-
-/** State for the buyer-facing center-video "OPENING NOW" / "WINNER!" overlay. */
-export interface ActiveReveal {
+/**
+ * Top-of-video win toast state. Set when `spot:won` arrives, cleared when
+ * `spot:revealed` arrives (or after a fallback timeout if the reveal event
+ * never lands).
+ */
+export interface WinToast {
   spotId: string;
   listingId: string;
   spotNumber: number;
-  spotName: string;
-  winnerId: string | null;
-  winnerUsername: string | null;
+  winnerId: string;
+  winnerUsername: string;
   winnerAvatarUrl: string | null;
-  /** Revealed when the seller hits Confirm. Until then this is null and we show "OPENING NOW". */
-  revealText: string | null;
+  soldPrice: number;
 }
 
-/** State for the personal "you got it!" modal that pops only for the winning user. */
+/**
+ * Reveal toast — replaces the win toast at T+3s. Holds until a new spot's
+ * win toast supersedes it or a short hold timer expires.
+ */
+export interface RevealToast {
+  spotId: string;
+  listingId: string;
+  spotNumber: number;
+  winnerId: string;
+  winnerUsername: string;
+  winnerAvatarUrl: string | null;
+  revealedTeam: string;
+}
+
+/** Personal "you got it!" modal that pops only for the winning user. */
 export interface PersonalWin {
   spotId: string;
   spotNumber: number;
-  revealText: string;
-  isRebroadcast: boolean;
-}
-
-/** Brief banner shown for ~2 seconds while the server runs the Fisher-Yates shuffle. */
-export interface RandomizingState {
-  listingId: string;
-  startedAtMs: number;
+  revealedTeam: string;
 }
 
 function patchSpot(breaks: Break[], spotId: string, patch: Partial<Spot>): Break[] {
@@ -72,13 +62,12 @@ function patchBreak(breaks: Break[], listingId: string, patch: Partial<Break>): 
   return breaks.map((b) => (b.id === listingId ? { ...b, ...patch } : b));
 }
 
+const REVEAL_TOAST_HOLD_MS = 5000;
+
 /**
  * Subscribes to all break-related WebSocket events for a stream and keeps
- * a `breaks` array in sync. Returns the local state plus an `activeSpin`
- * piece for the SpinAnimation overlay.
- *
- * `currentUserId` is used to decide whether to fire a personal-win modal
- * for the recipient of a reveal.
+ * a `breaks` array in sync. Drives the auto-reveal overlays (winToast,
+ * revealToast, personalWin).
  */
 export function useStreamBreaks(
   streamId: string,
@@ -87,19 +76,16 @@ export function useStreamBreaks(
 ) {
   const [breaks, setBreaks] = useState<Break[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeSpin, setActiveSpin] = useState<ActiveSpin | null>(null);
-  const [activeReveal, setActiveReveal] = useState<ActiveReveal | null>(null);
+  const [winToast, setWinToast] = useState<WinToast | null>(null);
+  const [revealToast, setRevealToast] = useState<RevealToast | null>(null);
   const [personalWin, setPersonalWin] = useState<PersonalWin | null>(null);
-  const [randomizing, setRandomizing] = useState<RandomizingState | null>(null);
-  // Confetti is just a tick: incrementing it tells the overlay to re-fire.
+  // Confetti is a tick: incrementing it tells the overlay to re-fire.
   const [confettiTick, setConfettiTick] = useState(0);
   // Wallet balance updates pushed by the server.
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
-  const breaksRef = useRef<Break[]>([]);
   const userIdRef = useRef<string | null | undefined>(currentUserId);
-  useEffect(() => {
-    breaksRef.current = breaks;
-  }, [breaks]);
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     userIdRef.current = currentUserId;
   }, [currentUserId]);
@@ -208,44 +194,6 @@ export function useStreamBreaks(
       );
     };
 
-    const onSpinStarted = (e: SpotSpinStartedEvent) => {
-      const found = breaksRef.current
-        .flatMap((b) => b.spots.map((s) => ({ s, listingId: b.id })))
-        .find(({ s }) => s.id === e.spotId);
-      setActiveSpin({
-        spotId: e.spotId,
-        listingId: found?.listingId ?? "",
-        candidates: e.candidateNames,
-        quickSpin: e.quickSpin,
-        resolvedName: null,
-        winnerId: found?.s.winnerId ?? null,
-        winnerUsername: found?.s.winner?.username ?? null,
-        startedAtMs: Date.now(),
-      });
-    };
-
-    const onSpinCompleted = (e: SpotSpinCompletedEvent) => {
-      setActiveSpin((prev) =>
-        prev && prev.spotId === e.spotId
-          ? {
-              ...prev,
-              resolvedName: e.assignedName,
-              winnerId: e.winnerId ?? prev.winnerId,
-              winnerUsername: e.winnerUsername ?? prev.winnerUsername,
-            }
-          : prev
-      );
-    };
-
-    const onAssigned = (e: SpotAssignedEvent) => {
-      setBreaks((prev) =>
-        patchSpot(prev, e.spotId, {
-          assignedName: e.assignedName,
-          spinPlayedAt: new Date().toISOString(),
-        })
-      );
-    };
-
     const onSkipped = (e: { spotId: string }) => {
       setBreaks((prev) => patchSpot(prev, e.spotId, { auctionStatus: "skipped" }));
     };
@@ -256,131 +204,63 @@ export function useStreamBreaks(
       setWalletBalance(e.newBalance);
     };
 
-    // ── Reveal-mode events ────────────────────────────────────────────
+    // ── Auto-reveal pipeline ──────────────────────────────────────────
 
-    const onRandomizing = (e: BreakRandomizingEvent) => {
-      setRandomizing({ listingId: e.listingId, startedAtMs: Date.now() });
-      setBreaks((prev) => patchBreak(prev, e.listingId, { status: "randomizing" }));
-      // Auto-clear after 3s in case the revealing_started event is missed.
-      setTimeout(() => {
-        setRandomizing((cur) => (cur && cur.listingId === e.listingId ? null : cur));
-      }, 3000);
-    };
-
-    const onRevealingStarted = (e: {
-      listingId: string;
-      assignments: Array<{
-        spotId: string;
-        spotNumber: number;
-        winnerId: string | null;
-        winnerUsername: string | null;
-      }>;
-    }) => {
-      setRandomizing(null);
-      setBreaks((prev) => {
-        const list = prev.map((b) => {
-          if (b.id !== e.listingId) return b;
-          // Apply the post-shuffle winner reassignment from the assignments table.
-          const byId = new Map(e.assignments.map((a) => [a.spotId, a]));
-          return {
-            ...b,
-            status: "revealing" as const,
-            revealStartedAt: new Date().toISOString(),
-            spots: b.spots.map((s) => {
-              const a = byId.get(s.id);
-              if (!a) return s;
-              if (a.winnerId === s.winnerId) return s;
-              return {
-                ...s,
-                winnerId: a.winnerId,
-                winner: a.winnerId
-                  ? { id: a.winnerId, username: a.winnerUsername ?? "", avatarUrl: null }
-                  : null,
-              };
-            }),
-          };
-        });
-        return list;
-      });
-    };
-
-    const onRevealStarted = (e: SpotRevealStartedEvent) => {
-      setBreaks((prev) =>
-        patchBreak(
-          patchSpot(prev, e.spotId, { revealStatus: "revealing" }),
-          e.listingId,
-          { currentRevealingSpotId: e.spotId }
-        )
-      );
-      setActiveReveal({
+    const onWon = (e: SpotWonEvent) => {
+      // T+0: surface the win toast at top of video. Cleared by the matching
+      // spot:revealed event ~3s later.
+      setWinToast({
         spotId: e.spotId,
         listingId: e.listingId,
         spotNumber: e.spotNumber,
-        spotName: e.spotName,
         winnerId: e.winnerId,
         winnerUsername: e.winnerUsername,
         winnerAvatarUrl: e.winnerAvatarUrl,
-        revealText: null,
+        soldPrice: e.soldPrice,
       });
-    };
-
-    const onRevealed = (e: SpotRevealedEvent) => {
-      setBreaks((prev) =>
-        patchBreak(
-          patchSpot(prev, e.spotId, {
-            revealStatus: "revealed",
-            revealText: e.revealText,
-            revealedAt: new Date().toISOString(),
-            revealOrder: e.revealOrder,
-          }),
-          e.listingId,
-          { currentRevealingSpotId: null }
-        )
-      );
-
-      // Update the centre overlay so it flips OPENING NOW → WINNER!
-      // (Skip for edits — they're silent updates.)
-      if (!e.isEdit) {
-        setActiveReveal((cur) =>
-          cur && cur.spotId === e.spotId
-            ? { ...cur, revealText: e.revealText, winnerId: e.winnerId, winnerUsername: e.winnerUsername }
-            : {
-                spotId: e.spotId,
-                listingId: e.listingId,
-                spotNumber: e.spotNumber,
-                spotName: e.spotName,
-                winnerId: e.winnerId,
-                winnerUsername: e.winnerUsername,
-                winnerAvatarUrl: e.winnerAvatarUrl,
-                revealText: e.revealText,
-              }
-        );
-
-        // Personal pop-up only for the spot's winner.
-        if (e.winnerId && userIdRef.current && e.winnerId === userIdRef.current) {
-          setPersonalWin({
-            spotId: e.spotId,
-            spotNumber: e.spotNumber,
-            revealText: e.revealText,
-            isRebroadcast: !!e.isRebroadcast,
-          });
-        }
+      // Clear any old reveal toast — the new spot's win takes the spotlight.
+      setRevealToast(null);
+      if (revealTimerRef.current) {
+        clearTimeout(revealTimerRef.current);
+        revealTimerRef.current = null;
       }
     };
 
-    const onRevealSkipped = (e: SpotRevealSkippedEvent) => {
+    const onRevealed = (e: SpotRevealedEvent) => {
+      // T+3: flip the spot to revealed in local state and morph the toast.
       setBreaks((prev) =>
-        patchBreak(
-          patchSpot(prev, e.spotId, { revealStatus: "skipped" }),
-          e.listingId,
-          { currentRevealingSpotId: null }
-        )
+        patchSpot(prev, e.spotId, {
+          isRevealedToBuyers: true,
+          revealedTeam: e.revealedTeam,
+          revealedAt: e.revealedAt,
+        })
       );
-      setActiveReveal((cur) => (cur && cur.spotId === e.spotId ? null : cur));
-    };
 
-    const onReorder = (e: SpotReorderEvent) => {
-      setBreaks((prev) => patchSpot(prev, e.spotId, { isPinned: e.isPinned }));
+      // Drop the win toast and surface the reveal toast in its place.
+      setWinToast(null);
+      setRevealToast({
+        spotId: e.spotId,
+        listingId: e.listingId,
+        spotNumber: e.spotNumber,
+        winnerId: e.winnerId,
+        winnerUsername: e.winnerUsername,
+        winnerAvatarUrl: e.winnerAvatarUrl,
+        revealedTeam: e.revealedTeam,
+      });
+      if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+      revealTimerRef.current = setTimeout(() => {
+        setRevealToast((cur) => (cur && cur.spotId === e.spotId ? null : cur));
+        revealTimerRef.current = null;
+      }, REVEAL_TOAST_HOLD_MS);
+
+      // Personal pop-up only for the spot's winner.
+      if (userIdRef.current && e.winnerId === userIdRef.current) {
+        setPersonalWin({
+          spotId: e.spotId,
+          spotNumber: e.spotNumber,
+          revealedTeam: e.revealedTeam,
+        });
+      }
     };
 
     const onCompleted = (e: BreakCompletedEvent) => {
@@ -388,68 +268,56 @@ export function useStreamBreaks(
         patchBreak(prev, e.listingId, {
           status: "completed",
           completedAt: new Date().toISOString(),
-          currentRevealingSpotId: null,
         })
       );
-      setActiveReveal((cur) => (cur && cur.listingId === e.listingId ? null : cur));
     };
 
     socket.on("break:created", onCreated);
     socket.on("break:started", onStarted);
-    socket.on("break:randomizing", onRandomizing);
-    socket.on("break:revealing_started", onRevealingStarted);
     socket.on("break:completed", onCompleted);
     socket.on("spot:auction_started", onAuctionStarted);
     socket.on("spot:bid_placed", onBidPlaced);
     socket.on("spot:auction_extended", onAuctionExtended);
     socket.on("spot:auction_ended", onAuctionEnded);
     socket.on("spot:purchased", onPurchased);
-    socket.on("spot:spin_started", onSpinStarted);
-    socket.on("spot:spin_completed", onSpinCompleted);
-    socket.on("spot:assigned", onAssigned);
     socket.on("spot:skipped", onSkipped);
-    socket.on("spot:reveal_started", onRevealStarted);
+    socket.on("spot:won", onWon);
     socket.on("spot:revealed", onRevealed);
-    socket.on("spot:reveal_skipped", onRevealSkipped);
-    socket.on("spot:reorder", onReorder);
     socket.on("confetti", onConfetti);
     socket.on("wallet:balance_updated", onWallet);
 
     return () => {
       socket.off("break:created", onCreated);
       socket.off("break:started", onStarted);
-      socket.off("break:randomizing", onRandomizing);
-      socket.off("break:revealing_started", onRevealingStarted);
       socket.off("break:completed", onCompleted);
       socket.off("spot:auction_started", onAuctionStarted);
       socket.off("spot:bid_placed", onBidPlaced);
       socket.off("spot:auction_extended", onAuctionExtended);
       socket.off("spot:auction_ended", onAuctionEnded);
       socket.off("spot:purchased", onPurchased);
-      socket.off("spot:spin_started", onSpinStarted);
-      socket.off("spot:spin_completed", onSpinCompleted);
-      socket.off("spot:assigned", onAssigned);
       socket.off("spot:skipped", onSkipped);
-      socket.off("spot:reveal_started", onRevealStarted);
+      socket.off("spot:won", onWon);
       socket.off("spot:revealed", onRevealed);
-      socket.off("spot:reveal_skipped", onRevealSkipped);
-      socket.off("spot:reorder", onReorder);
       socket.off("confetti", onConfetti);
       socket.off("wallet:balance_updated", onWallet);
     };
   }, [socket]);
 
+  // Cleanup the reveal hold timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+    };
+  }, []);
+
   return {
     breaks,
     loading,
     refresh,
-    activeSpin,
-    dismissSpin: () => setActiveSpin(null),
-    activeReveal,
-    dismissReveal: () => setActiveReveal(null),
+    winToast,
+    revealToast,
     personalWin,
     dismissPersonalWin: () => setPersonalWin(null),
-    randomizing,
     confettiTick,
     walletBalance,
   };
@@ -461,4 +329,19 @@ export function findActiveSpot(breaks: Break[]): { breakItem: Break; spot: Spot 
     if (active) return { breakItem: b, spot: active };
   }
   return null;
+}
+
+/**
+ * Pick the most recently sold spot in a break (by soldAt). Used by the
+ * bottom-of-video title overlay to show "Break Name - Team" once the auto
+ * reveal has fired. Returns null if no spots are sold yet.
+ */
+export function findLatestSoldSpot(breakItem: Break | null | undefined): Spot | null {
+  if (!breakItem) return null;
+  let latest: Spot | null = null;
+  for (const s of breakItem.spots) {
+    if (!s.soldAt) continue;
+    if (!latest || (s.soldAt ?? "") > (latest.soldAt ?? "")) latest = s;
+  }
+  return latest;
 }

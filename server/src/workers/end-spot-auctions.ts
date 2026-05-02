@@ -1,12 +1,8 @@
 import prisma from "../lib/prisma";
 import logger from "../lib/logger";
 import { emitToStream } from "../websocket/emitter";
-import {
-  endSpotAuction,
-  pickRandomAssignment,
-  commitSpinAssignment,
-} from "../services/break.service";
-import { maybeStartReveal } from "../services/reveal.service";
+import { endSpotAuction } from "../services/break.service";
+import { scheduleAutoReveal, maybeCompleteBreak } from "../services/reveal.service";
 import { emitSystemEvent } from "../services/chat-events.service";
 import { broadcastStreamStats } from "../services/stream-stats.service";
 
@@ -31,7 +27,14 @@ export async function endExpiredSpotAuctions(): Promise<number> {
       const result = await endSpotAuction(id);
       if (!result || "rescheduleAt" in result) continue;
 
-      // Broadcast end
+      // Whatnot-style auto-reveal flow:
+      //   T+0  → spot:won  (top-of-video toast: "X won the auction!")
+      //   T+3s → spot:revealed (toast morphs into team reveal + confetti)
+      //
+      // We always emit spot:auction_ended for legacy listeners (it's still
+      // useful for ledgers/spot-list refreshes), and on top of that the
+      // win toast lives on its own event so the client can give it the
+      // distinct top-of-video treatment.
       emitToStream(result.streamId, "spot:auction_ended", {
         spotId: id,
         listingId: result.listingId,
@@ -49,8 +52,18 @@ export async function endExpiredSpotAuctions(): Promise<number> {
         });
       }
 
-      // System chat event: spot won + live stats refresh
+      // Win toast event + chat row + stats refresh — only when there's a winner.
       if (result.winnerId && result.winnerUsername) {
+        emitToStream(result.streamId, "spot:won", {
+          spotId: result.spot.id,
+          listingId: result.listingId,
+          spotNumber: result.spot.spotNumber,
+          winnerId: result.winnerId,
+          winnerUsername: result.winnerUsername,
+          winnerAvatarUrl: result.winnerAvatarUrl ?? null,
+          soldPrice: result.soldPrice,
+        });
+
         void emitSystemEvent(result.streamId, {
           eventType: "spot_won",
           spotId: result.spot.id,
@@ -62,14 +75,16 @@ export async function endExpiredSpotAuctions(): Promise<number> {
         void broadcastStreamStats(result.streamId).catch((err) =>
           logger.error(err, "broadcastStreamStats failed")
         );
-      }
 
-      // Reveal mode replaces per-spot spinning. After every auction ends,
-      // ask the reveal orchestrator whether the break is fully sold and ready
-      // to enter randomizing → revealing.
-      void maybeStartReveal(result.listingId).catch((err) =>
-        logger.error(err, "maybeStartReveal failed")
-      );
+        // Schedule the T+3s auto-reveal on the same spot.
+        scheduleAutoReveal(result.spot.id);
+      } else {
+        // Auction ended with no winner — nothing to reveal, but the break
+        // might be complete now if this was the last unresolved spot.
+        void maybeCompleteBreak(result.listingId).catch((err) =>
+          logger.error(err, "maybeCompleteBreak failed")
+        );
+      }
 
       ended++;
     } catch (err) {
@@ -78,49 +93,4 @@ export async function endExpiredSpotAuctions(): Promise<number> {
   }
 
   return ended;
-}
-
-/**
- * Run a spin for a single won random-format spot. Broadcasts spin:started
- * immediately, waits for the configured spin duration, then commits and
- * broadcasts spin:completed + spot:assigned.
- *
- * Server is the source of truth for the assigned name — clients animate
- * but never compute the result themselves.
- */
-export async function runSpin(spotId: string, streamId: string): Promise<void> {
-  const spotMeta = await prisma.spot.findUnique({
-    where: { id: spotId },
-    include: { listing: { select: { quickSpin: true } } },
-  });
-  if (!spotMeta) return;
-
-  const { assignedName, candidates } = await pickRandomAssignment(spotId);
-
-  emitToStream(streamId, "spot:spin_started", {
-    spotId,
-    candidateNames: candidates,
-    quickSpin: spotMeta.listing.quickSpin,
-  });
-
-  const spinDurationMs = spotMeta.listing.quickSpin ? 3000 : 6000;
-  await new Promise((resolve) => setTimeout(resolve, spinDurationMs));
-
-  const updated = await commitSpinAssignment(spotId, assignedName);
-
-  emitToStream(streamId, "spot:spin_completed", {
-    spotId,
-    assignedName,
-    winnerId: updated.winnerId,
-    winnerUsername: updated.winner?.username ?? null,
-  });
-
-  emitToStream(streamId, "spot:assigned", {
-    spotId,
-    assignedName,
-    winnerId: updated.winnerId,
-    winnerUsername: updated.winner?.username ?? null,
-  });
-
-  emitToStream(streamId, "confetti", {});
 }

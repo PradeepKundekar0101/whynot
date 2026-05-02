@@ -80,7 +80,13 @@ export function BreakCreationModal({
 
   const currentSpots: SpotRow[] = useMemo(() => {
     if (breakFormat === "random") {
-      return Array.from({ length: numberOfSpots }, (_, i) => ({
+      // Random spots stay as anonymous "Spot #N" labels; the server will
+      // shuffle the chosen preset's teams and assign one per spot at create
+      // time, hidden from buyers until each auction's auto-reveal fires.
+      const presetSize = spotsByPreset[spotPreset]?.length ?? 0;
+      // Cap by preset size so we never request more spots than there are teams.
+      const cap = spotPreset === "custom" ? numberOfSpots : Math.min(numberOfSpots, presetSize || numberOfSpots);
+      return Array.from({ length: cap }, (_, i) => ({
         id: `r-${i}`,
         spotName: `Spot #${i + 1}`,
         startingPrice: DEFAULT_STARTING_PRICE,
@@ -136,7 +142,7 @@ export function BreakCreationModal({
           breakDescription: breakDescription.trim() || undefined,
           sellingMode: mode,
           breakFormat,
-          spotPreset: breakFormat === "random" ? undefined : spotPreset,
+          spotPreset,
           shippingProfile,
           autoRandomize,
           quickSpin,
@@ -272,18 +278,45 @@ export function BreakCreationModal({
           )}
 
           {breakFormat === "random" && (
-            <Field label="Number of Spots">
-              <input
-                type="number"
-                min={2}
-                max={500}
-                value={numberOfSpots}
-                onChange={(e) =>
-                  setNumberOfSpots(Math.max(2, Math.min(500, parseInt(e.target.value) || 2)))
-                }
-                className="dark-input"
-              />
-            </Field>
+            <>
+              {/* Pick the preset whose teams will be shuffled and hidden behind
+                  each numbered spot. The auto-reveal pipeline surfaces each
+                  team to buyers as its spot's auction ends. */}
+              <Field label="Spot Preset">
+                <select
+                  value={spotPreset}
+                  onChange={(e) => setSpotPreset(e.target.value)}
+                  className="dark-input"
+                >
+                  {PRESET_OPTIONS.filter((p) => p.value !== "custom").map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-xs text-white/50">
+                  Each spot will be secretly assigned a team from this preset and revealed automatically after that spot is sold.
+                </p>
+              </Field>
+
+              <Field label="Number of Spots">
+                <input
+                  type="number"
+                  min={2}
+                  max={Math.max(2, presets?.presets[spotPreset]?.length ?? 500)}
+                  value={numberOfSpots}
+                  onChange={(e) =>
+                    setNumberOfSpots(Math.max(2, Math.min(500, parseInt(e.target.value) || 2)))
+                  }
+                  className="dark-input"
+                />
+                {presets && presets.presets[spotPreset]?.length && (
+                  <p className="mt-1.5 text-xs text-white/50">
+                    {presets.presets[spotPreset].length} teams in this preset.
+                  </p>
+                )}
+              </Field>
+            </>
           )}
 
           <hr className="border-white/10" />

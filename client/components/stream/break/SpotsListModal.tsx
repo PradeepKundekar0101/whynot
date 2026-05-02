@@ -31,18 +31,12 @@ function emit<T>(socket: Socket | null, event: string, data: T): Promise<AckResp
   });
 }
 
-function statusBadge(spot: Spot): React.ReactNode {
-  if (spot.revealStatus === "revealing") {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs text-yellow-700 bg-yellow-100 px-2 py-0.5 rounded-full font-semibold animate-pulse">
-        <Sparkles className="h-3 w-3" />
-        Revealing now
-      </span>
-    );
-  }
-  if (spot.revealStatus === "revealed") {
+function statusBadge(spot: Spot, isPickYour: boolean): React.ReactNode {
+  // Random format: revealed = team known to everyone.
+  if (!isPickYour && spot.isRevealedToBuyers) {
     return (
       <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-100 px-2 py-0.5 rounded-full font-semibold">
+        <Sparkles className="h-3 w-3" />
         Revealed
       </span>
     );
@@ -67,6 +61,17 @@ function statusBadge(spot: Spot): React.ReactNode {
   return <span className="text-xs text-muted-foreground">Available</span>;
 }
 
+/**
+ * Pick the buyer-facing label for a spot. For pick-your, that's the spotName
+ * (which is the team). For random, it's "Spot #N" until the auto-reveal flips
+ * isRevealedToBuyers, after which the team becomes the headline.
+ */
+function spotHeadline(spot: Spot, isPickYour: boolean): string {
+  if (isPickYour) return spot.spotName;
+  if (spot.isRevealedToBuyers && spot.revealedTeam) return spot.revealedTeam;
+  return spot.spotName; // "Spot #N"
+}
+
 export function SpotsListModal({
   open,
   onClose,
@@ -82,29 +87,32 @@ export function SpotsListModal({
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const isPickYour = brk?.breakFormat === "pick_your";
+
   const spots = useMemo(() => {
     if (!brk) return [];
     let list = brk.spots;
     if (filter === "available") list = list.filter((s) => !s.winnerId && s.auctionStatus !== "skipped");
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      list = list.filter(
-        (s) =>
-          s.spotName.toLowerCase().includes(q) ||
-          (s.assignedName ?? "").toLowerCase().includes(q)
-      );
+      list = list.filter((s) => {
+        const headline = spotHeadline(s, brk.breakFormat === "pick_your");
+        return (
+          headline.toLowerCase().includes(q) ||
+          s.spotName.toLowerCase().includes(q)
+        );
+      });
     }
     const cmp = (a: Spot, b: Spot) => {
-      if (sort === "alpha") return a.spotName.localeCompare(b.spotName);
+      if (sort === "alpha") return spotHeadline(a, !!isPickYour).localeCompare(spotHeadline(b, !!isPickYour));
       if (sort === "price") return (a.startingPrice ?? 0) - (b.startingPrice ?? 0);
       return a.spotNumber - b.spotNumber;
     };
     return [...list].sort(cmp);
-  }, [brk, sort, filter, search]);
+  }, [brk, sort, filter, search, isPickYour]);
 
   if (!brk) return null;
 
-  const isPickYour = brk.breakFormat === "pick_your";
   const isBuyNow = brk.sellingMode === "buy_it_now";
   const isOwnStream = false; // sellers don't see this modal in buyer mode
 
@@ -199,22 +207,24 @@ export function SpotsListModal({
                 const isLive = spot.auctionStatus === "active";
                 const isSold = !!spot.winnerId;
                 const canBuyNow = isBuyNow && !isSold && !isOwnStream;
-                const isRevealing = spot.revealStatus === "revealing";
-                const isRevealed = spot.revealStatus === "revealed";
+                const headline = spotHeadline(spot, !!isPickYour);
+                // For random spots, the winner gets to see their team even
+                // before the public reveal — surface that prominently.
+                const winnerTeam =
+                  !isPickYour && isMine && spot.revealedTeam && !spot.isRevealedToBuyers
+                    ? spot.revealedTeam
+                    : null;
                 return (
                   <div
                     key={spot.id}
                     className={cn(
                       "p-3",
-                      isMine && "bg-yellow-50 border-l-2 border-yellow-300",
-                      isRevealing && "ring-2 ring-yellow-400 ring-inset animate-pulse"
+                      isMine && "bg-yellow-50 border-l-2 border-yellow-300"
                     )}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-bold">
-                          {isPickYour ? spot.spotName : `Spot #${spot.spotNumber}`}
-                        </p>
+                        <p className="text-sm font-bold">{headline}</p>
                         {spot.winnerId && (
                           <p className="text-xs text-muted-foreground mt-0.5">
                             {isMine ? (
@@ -225,29 +235,24 @@ export function SpotsListModal({
                           </p>
                         )}
                       </div>
-                      {statusBadge(spot)}
+                      {statusBadge(spot, !!isPickYour)}
                     </div>
 
-                    {/* Reveal text or pre-reveal status */}
-                    {spot.winnerId && spot.revealStatus === "pending" && (
-                      <p className="mt-2 text-xs text-muted-foreground italic flex items-center gap-1">
-                        <Gift className="h-3 w-3" />
-                        Awaiting reveal…
-                      </p>
-                    )}
-                    {isRevealing && (
-                      <p className="mt-2 text-sm font-bold text-yellow-700 flex items-center gap-1">
-                        <Sparkles className="h-3.5 w-3.5" />
-                        Watch the stream — revealing now!
-                      </p>
-                    )}
-                    {isRevealed && spot.revealText && (
-                      <div className="mt-2 rounded-lg bg-green-50 border border-green-200 px-3 py-2">
-                        <p className="text-[10px] uppercase tracking-wider text-green-700 mb-0.5">
-                          Reveal
+                    {/* Personal preview for the winner before public reveal */}
+                    {winnerTeam && (
+                      <div className="mt-2 rounded-lg bg-yellow-100 border border-yellow-300 px-3 py-2">
+                        <p className="text-[10px] uppercase tracking-wider text-yellow-700 mb-0.5">
+                          Your team (hidden until reveal)
                         </p>
-                        <p className="text-sm font-bold text-green-900">{spot.revealText}</p>
+                        <p className="text-sm font-bold text-yellow-900">{winnerTeam}</p>
                       </div>
+                    )}
+
+                    {/* Public reveal callout */}
+                    {!isPickYour && spot.isRevealedToBuyers && spot.revealedTeam && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Spot #{spot.spotNumber}
+                      </p>
                     )}
 
                     <div className="flex items-center justify-between mt-2">

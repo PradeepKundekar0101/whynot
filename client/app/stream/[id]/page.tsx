@@ -15,10 +15,10 @@ import { ConfettiOverlay } from "@/components/stream/ConfettiOverlay";
 import { BreakCardCompact } from "@/components/stream/break/BreakCardCompact";
 import { SpotsListModal } from "@/components/stream/break/SpotsListModal";
 import { ActiveAuctionOverlay } from "@/components/stream/break/ActiveAuctionOverlay";
-import { SpinAnimation } from "@/components/stream/break/SpinAnimation";
-import { RevealOverlay } from "@/components/stream/break/RevealOverlay";
+import { AutoRevealToast } from "@/components/stream/break/AutoRevealToast";
+import { PostSaleBottomBar } from "@/components/stream/break/PostSaleBottomBar";
 import { PersonalWinModal } from "@/components/stream/break/PersonalWinModal";
-import { findActiveSpot, useStreamBreaks } from "@/hooks/useStreamBreaks";
+import { findActiveSpot, findLatestSoldSpot, useStreamBreaks } from "@/hooks/useStreamBreaks";
 import type { Break } from "@/lib/break-types";
 import { cn } from "@/lib/utils";
 
@@ -125,10 +125,8 @@ export default function StreamWatchPage() {
   const {
     breaks,
     loading: breaksLoading,
-    activeSpin,
-    dismissSpin,
-    activeReveal,
-    randomizing,
+    winToast,
+    revealToast,
     personalWin,
     dismissPersonalWin,
     confettiTick,
@@ -250,6 +248,19 @@ export default function StreamWatchPage() {
   }, [activeTab, breaks, search]);
 
   const activeSpotInfo = findActiveSpot(breaks);
+
+  // Pick the break that just had a sale to drive the bottom strip when no
+  // auction is running. Falls back to the first in-progress break.
+  const focusBreak =
+    activeSpotInfo?.breakItem ??
+    breaks.find((b) => b.status === "breaking") ??
+    null;
+  const latestSoldSpot = findLatestSoldSpot(focusBreak);
+  const showPostSaleBar =
+    !activeSpotInfo &&
+    !!focusBreak &&
+    !!latestSoldSpot &&
+    focusBreak.status === "breaking";
 
   const playerSeller = useMemo(
     () =>
@@ -415,9 +426,9 @@ export default function StreamWatchPage() {
                 ) : null}
               </div>
 
-              <RevealOverlay reveal={activeReveal} randomizing={!!randomizing} />
+              <AutoRevealToast winToast={winToast} revealToast={revealToast} />
 
-              {activeSpotInfo && !activeReveal && !randomizing && (
+              {activeSpotInfo ? (
                 <ActiveAuctionOverlay
                   breakItem={activeSpotInfo.breakItem}
                   spot={activeSpotInfo.spot}
@@ -425,7 +436,9 @@ export default function StreamWatchPage() {
                   walletBalanceCents={user?.walletBalance ?? 0}
                   onTopUp={() => router.push("/wallet")}
                 />
-              )}
+              ) : showPostSaleBar ? (
+                <PostSaleBottomBar breakItem={focusBreak} spot={latestSoldSpot} />
+              ) : null}
             </div>
           </div>
 
@@ -482,7 +495,6 @@ export default function StreamWatchPage() {
         onTopUp={() => router.push("/wallet")}
       />
 
-      <SpinAnimation spin={activeSpin} onClose={dismissSpin} />
       <PersonalWinModal win={personalWin} onClose={dismissPersonalWin} />
       <ConfettiOverlay trigger={confettiTick} />
     </div>

@@ -11,7 +11,17 @@ export interface Spot {
   spotName: string;
   description: string | null;
   startingPrice: number; // cents
-  assignedName: string | null;
+
+  /**
+   * The team behind this spot — surfaced by the API only when:
+   *   - the caller is the seller, OR
+   *   - the caller is the winner of this spot, OR
+   *   - the spot has been publicly revealed (isRevealedToBuyers=true).
+   * Null otherwise. Use this in UI; never reach into a hidden field.
+   */
+  revealedTeam: string | null;
+  isRevealedToBuyers: boolean;
+  revealedAt: string | null;
 
   auctionStatus: "pending" | "active" | "ended" | "skipped";
   auctionStartedAt: string | null;
@@ -31,15 +41,6 @@ export interface Spot {
   soldPrice: number | null;
   soldAt: string | null;
 
-  spinPlayedAt: string | null;
-
-  // Reveal mode
-  revealStatus: "pending" | "revealing" | "revealed" | "skipped";
-  revealText: string | null;
-  revealedAt: string | null;
-  revealOrder: number | null;
-  isPinned: boolean;
-
   createdAt: string;
 }
 
@@ -53,12 +54,9 @@ export interface Break {
   breakFormat: "pick_your" | "random";
   spotPreset: string | null;
   shippingProfile: string;
-  status: "filling" | "breaking" | "randomizing" | "revealing" | "completed" | "cancelled";
+  status: "filling" | "breaking" | "completed" | "cancelled";
   startedAt: string | null;
-  randomizationCompletedAt: string | null;
-  revealStartedAt: string | null;
   completedAt: string | null;
-  currentRevealingSpotId: string | null;
   autoRandomize: boolean;
   quickSpin: boolean;
   createdAt: string;
@@ -106,75 +104,36 @@ export interface SpotPurchasedEvent {
   soldPrice: number;
 }
 
-export interface SpotSpinStartedEvent {
-  spotId: string;
-  candidateNames: string[];
-  quickSpin: boolean;
-}
+// ── Auto-reveal events ────────────────────────────────────────────────────
 
-export interface SpotSpinCompletedEvent {
-  spotId: string;
-  assignedName: string;
-  winnerId: string | null;
-  winnerUsername: string | null;
-}
-
-export interface SpotAssignedEvent {
-  spotId: string;
-  assignedName: string;
-  winnerId: string | null;
-  winnerUsername: string | null;
-}
-
-// ── Reveal mode events ──────────────────────────────────────────────
-
-export interface BreakRandomizingEvent {
-  listingId: string;
-}
-
-export interface BreakRevealingStartedEvent {
-  listingId: string;
-  assignments: Array<{
-    spotId: string;
-    spotNumber: number;
-    winnerId: string | null;
-    winnerUsername: string | null;
-  }>;
-}
-
-export interface SpotRevealStartedEvent {
+/**
+ * Fires immediately when a spot is sold (auction ended OR buy-it-now).
+ * Drives the top-of-video "X won the auction!" toast.
+ */
+export interface SpotWonEvent {
   spotId: string;
   listingId: string;
   spotNumber: number;
-  spotName: string;
-  winnerId: string | null;
-  winnerUsername: string | null;
+  winnerId: string;
+  winnerUsername: string;
   winnerAvatarUrl: string | null;
+  soldPrice: number;
 }
 
+/**
+ * Fires ~3 seconds after spot:won — the team is now public.
+ * Drives confetti + the "X's spot is ... Team Name" toast.
+ */
 export interface SpotRevealedEvent {
   spotId: string;
   listingId: string;
   spotNumber: number;
   spotName: string;
-  revealText: string;
-  winnerId: string | null;
-  winnerUsername: string | null;
+  revealedTeam: string;
+  winnerId: string;
+  winnerUsername: string;
   winnerAvatarUrl: string | null;
-  revealOrder: number;
-  isEdit: boolean;
-  isRebroadcast?: boolean;
-}
-
-export interface SpotRevealSkippedEvent {
-  spotId: string;
-  listingId: string;
-}
-
-export interface SpotReorderEvent {
-  listingId: string;
-  spotId: string;
-  isPinned: boolean;
+  revealedAt: string;
 }
 
 export interface BreakCompletedEvent {

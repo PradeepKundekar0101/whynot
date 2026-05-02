@@ -135,16 +135,10 @@ model Listing {
   spotPreset       String?  // "nfl_teams" | "nba_teams" | "custom" | null
   shippingProfile  String   @default("4-7oz")
 
-  // Lifecycle: "filling" | "breaking" | "randomizing" | "revealing" | "completed" | "cancelled"
+  // Lifecycle: "filling" | "breaking" | "completed" | "cancelled"
   status                    String
   startedAt                 DateTime?
-  randomizationCompletedAt  DateTime?
-  revealStartedAt           DateTime?
   completedAt               DateTime?
-
-  /// The spot that's currently in the seller's reveal "spotlight" (theater mode).
-  /// Null when no spot is being revealed; only one spot can be revealing at a time.
-  currentRevealingSpotId    String?
 
   autoRandomize    Boolean  @default(true)
   quickSpin        Boolean  @default(true)
@@ -158,8 +152,10 @@ model Listing {
 }
 
 /// A single biddable/buyable unit inside a break.
-/// Pick-your: spotName is the team (e.g. "Tennessee Titans") and assignedName mirrors it.
-/// Random: spotName is "Spot #N" and assignedName is filled in by the spin after auction ends.
+/// Pick-your: spotName is the team (e.g. "Tennessee Titans") and preAssignedTeam mirrors it,
+///   isRevealedToBuyers=true from creation.
+/// Random:    spotName is "Spot #N" and preAssignedTeam is the shuffled team assigned at creation,
+///   hidden from buyers (isRevealedToBuyers=false) until the auction-end auto-reveal flips it.
 model Spot {
   id              String   @id @default(uuid())
   listingId       String
@@ -170,7 +166,16 @@ model Spot {
   description     String?
   startingPrice   Int      // cents
 
-  assignedName    String?
+  /// The preset-team this spot was assigned to at break creation. For random
+  /// breaks this is the result of a Fisher-Yates shuffle and is NEVER exposed
+  /// to buyers (other than the winner) until isRevealedToBuyers flips true.
+  preAssignedTeam     String?
+  isRevealedToBuyers  Boolean   @default(false)
+  revealedAt          DateTime?
+
+  /// Optional free-text reveal (kept for backward compatibility / non-preset
+  /// breaks). For random/preset breaks the reveal value is preAssignedTeam.
+  revealText      String?
 
   // Auction state
   auctionStatus   String   @default("pending") // "pending" | "active" | "ended" | "skipped"
@@ -193,20 +198,6 @@ model Spot {
   soldPrice       Int?
   soldAt          DateTime?
 
-  spinPlayedAt    DateTime?
-
-  // Reveal state — separate from auction state. After a spot is sold (auction
-  // won or buy-it-now claimed), it enters the reveal queue.
-  // "pending"   — sold, awaiting reveal
-  // "revealing" — currently in the seller's spotlight
-  // "revealed"  — seller has confirmed what was inside
-  // "skipped"   — seller postponed; will circle back
-  revealStatus    String   @default("pending")
-  revealText      String?
-  revealedAt      DateTime?
-  revealOrder     Int?
-  isPinned        Boolean  @default(false)
-
   createdAt       DateTime @default(now())
 
   bids            SpotBid[]
@@ -215,7 +206,7 @@ model Spot {
 
   @@index([listingId, spotNumber])
   @@index([auctionStatus, auctionEndsAt])
-  @@index([listingId, revealStatus])
+  @@index([listingId, isRevealedToBuyers])
 }
 
 /// An order is created when a break completes. One Order per buyer per break,

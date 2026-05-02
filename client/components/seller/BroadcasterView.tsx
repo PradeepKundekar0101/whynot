@@ -32,11 +32,9 @@ import { apiFetch, getAccessToken, API_ORIGIN } from "@/lib/api";
 import { StreamRightPanel } from "@/components/stream/StreamRightPanel";
 import { CameraOffPlaceholder } from "@/components/stream/CameraOffPlaceholder";
 import { ConfettiOverlay } from "@/components/stream/ConfettiOverlay";
-import { SpinAnimation } from "@/components/stream/break/SpinAnimation";
 import { BreakCreationModal } from "@/components/seller/break/BreakCreationModal";
 import { BreakControlPanel } from "@/components/seller/break/BreakControlPanel";
-import { RevealModePanel } from "@/components/seller/break/RevealModePanel";
-import { RevealOverlay } from "@/components/stream/break/RevealOverlay";
+import { AutoRevealToast } from "@/components/stream/break/AutoRevealToast";
 import { useStreamBreaks } from "@/hooks/useStreamBreaks";
 import { useStreamStats } from "@/hooks/useStreamStats";
 import { useAuth } from "@/hooks/useAuth";
@@ -366,10 +364,8 @@ export function BroadcasterView({
   const {
     breaks,
     refresh,
-    activeSpin,
-    dismissSpin,
-    activeReveal,
-    randomizing,
+    winToast,
+    revealToast,
     confettiTick,
   } = useStreamBreaks(streamId, socket, user?.id);
   const stats = useStreamStats(streamId, socket);
@@ -655,7 +651,7 @@ export function BroadcasterView({
                   </span>
                 </div>
 
-                <RevealOverlay reveal={activeReveal} randomizing={!!randomizing} />
+                <AutoRevealToast winToast={winToast} revealToast={revealToast} />
               </div>
             </div>
 
@@ -685,16 +681,13 @@ export function BroadcasterView({
             </div>
           </div>
 
-          {/* Break control panel — visible md+ when a break is expanded */}
+          {/* Break control panel — visible md+ when a break is expanded.
+              The seller no longer has a separate "Reveal Mode" panel because
+              reveals are fully automatic; they always see the auction control
+              surface for whichever break is active. */}
           {expandedBreak && (
             <aside className="hidden md:flex w-72 xl:w-80 border-t md:border-t-0 md:border-l border-white/10 bg-[#0F0F0F] flex-col min-w-0 shrink-0">
-              {expandedBreak.status === "revealing" ||
-              expandedBreak.status === "randomizing" ||
-              expandedBreak.status === "completed" ? (
-                <RevealModePanel break={expandedBreak} socket={socket} />
-              ) : (
-                <BreakControlPanel break={expandedBreak} socket={socket} />
-              )}
+              <BreakControlPanel break={expandedBreak} socket={socket} />
             </aside>
           )}
         </main>
@@ -722,7 +715,6 @@ export function BroadcasterView({
         onCreated={() => void refresh()}
       />
 
-      <SpinAnimation spin={activeSpin} onClose={dismissSpin} />
       <ConfettiOverlay trigger={confettiTick} />
     </div>
   );
