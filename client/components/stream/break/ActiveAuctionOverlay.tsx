@@ -93,7 +93,14 @@ export function ActiveAuctionOverlay({
     }
   };
 
-  const formatLabel = breakItem.breakFormat === "pick_your" ? "Pick Your Team" : "Random Team";
+  const formatLabel =
+    breakItem.assignmentMode === "pick_your"
+      ? "Pick Your"
+      : breakItem.assignmentMode === "pre_assigned"
+        ? "Random"
+        : breakItem.assignmentMode === "random_per_spot"
+          ? "Random Per Spot"
+          : "Random At End";
 
   return (
     <>

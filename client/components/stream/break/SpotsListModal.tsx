@@ -5,6 +5,7 @@ import type { Socket } from "socket.io-client";
 import { ArrowDownAZ, ArrowUp01, Search, Sparkles, Gift } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import type { Break, Spot, AckResponse } from "@/lib/break-types";
+import { spotTypeCopy } from "@/lib/break-types";
 import { formatCents, shippingProfileLabel } from "@/lib/break-format";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -32,7 +33,7 @@ function emit<T>(socket: Socket | null, event: string, data: T): Promise<AckResp
 }
 
 function statusBadge(spot: Spot, isPickYour: boolean): React.ReactNode {
-  // Random format: revealed = team known to everyone.
+  // Random assignment modes: revealed = content known to everyone.
   if (!isPickYour && spot.isRevealedToBuyers) {
     return (
       <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-100 px-2 py-0.5 rounded-full font-semibold">
@@ -87,7 +88,7 @@ export function SpotsListModal({
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const isPickYour = brk?.breakFormat === "pick_your";
+  const isPickYour = brk?.assignmentMode === "pick_your";
 
   const spots = useMemo(() => {
     if (!brk) return [];
@@ -96,7 +97,7 @@ export function SpotsListModal({
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((s) => {
-        const headline = spotHeadline(s, brk.breakFormat === "pick_your");
+        const headline = spotHeadline(s, brk.assignmentMode === "pick_your");
         return (
           headline.toLowerCase().includes(q) ||
           s.spotName.toLowerCase().includes(q)
@@ -115,6 +116,7 @@ export function SpotsListModal({
 
   const isBuyNow = brk.sellingMode === "buy_it_now";
   const isOwnStream = false; // sellers don't see this modal in buyer mode
+  const copy = spotTypeCopy(brk.spotType);
 
   const handleBuy = async (spot: Spot) => {
     setError(null);
@@ -138,7 +140,7 @@ export function SpotsListModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={isPickYour ? "Pick a Team" : "Pick a Spot"}
+      title={isPickYour ? copy.pickVerb : "Pick a Spot"}
       description={brk.breakName}
       size="lg"
     >
@@ -242,7 +244,7 @@ export function SpotsListModal({
                     {winnerTeam && (
                       <div className="mt-2 rounded-lg bg-yellow-100 border border-yellow-300 px-3 py-2">
                         <p className="text-[10px] uppercase tracking-wider text-yellow-700 mb-0.5">
-                          Your team (hidden until reveal)
+                          Your {copy.singular} (hidden until reveal)
                         </p>
                         <p className="text-sm font-bold text-yellow-900">{winnerTeam}</p>
                       </div>

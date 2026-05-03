@@ -1,10 +1,11 @@
 /**
- * Predefined spot presets for breaks. The seller picks one from a dropdown
- * and the spot table is auto-populated. Used by both the API (validation)
- * and the client (dropdown options).
+ * Predefined spot pools (named lists of teams, characters, etc.) and break
+ * templates (full Quick-Start configurations). Used by both the API
+ * (validation + create) and the client (dropdown options + template picker).
  */
 
 export const SPOT_PRESETS = {
+  // ── Sports teams ────────────────────────────────────────────────────────
   nfl_teams: [
     "Arizona Cardinals", "Atlanta Falcons", "Baltimore Ravens", "Buffalo Bills",
     "Carolina Panthers", "Chicago Bears", "Cincinnati Bengals", "Cleveland Browns",
@@ -53,6 +54,17 @@ export const SPOT_PRESETS = {
     "St. Louis Blues", "Tampa Bay Lightning", "Toronto Maple Leafs", "Utah Hockey Club",
     "Vancouver Canucks", "Vegas Golden Knights", "Washington Capitals", "Winnipeg Jets",
   ],
+
+  // ── Pokemon characters (popular subset for character breaks) ────────────
+  pokemon_popular: [
+    "Pikachu", "Charizard", "Mewtwo", "Mew", "Lugia", "Rayquaza",
+    "Gyarados", "Snorlax", "Gengar", "Eevee", "Lucario", "Greninja",
+    "Garchomp", "Tyranitar", "Dragonite", "Metagross", "Salamence",
+    "Sceptile", "Blaziken", "Swampert", "Decidueye", "Incineroar",
+    "Primarina", "Rillaboom", "Cinderace", "Inteleon", "Ogerpon",
+    "Terapagos", "Koraidon", "Miraidon",
+  ],
+
   custom: [],
 } as const;
 
@@ -77,3 +89,132 @@ export function isValidPreset(key: string): key is SpotPresetKey {
 export function isValidShippingProfile(key: string): boolean {
   return SHIPPING_PROFILES.some((p) => p.value === key);
 }
+
+// ── Break format types ─────────────────────────────────────────────────────
+
+export const SPOT_TYPES = ["team", "character", "pack", "hit", "slot"] as const;
+export type SpotType = (typeof SPOT_TYPES)[number];
+
+export const ASSIGNMENT_MODES = [
+  "pick_your",
+  "pre_assigned",
+  "random_per_spot",
+  "random_at_end",
+] as const;
+export type AssignmentMode = (typeof ASSIGNMENT_MODES)[number];
+
+export function isSpotType(value: string): value is SpotType {
+  return (SPOT_TYPES as readonly string[]).includes(value);
+}
+
+export function isAssignmentMode(value: string): value is AssignmentMode {
+  return (ASSIGNMENT_MODES as readonly string[]).includes(value);
+}
+
+// ── Quick-start templates ──────────────────────────────────────────────────
+
+export interface BreakTemplate {
+  id: string;
+  name: string;
+  description: string;
+  config: {
+    spotType: SpotType;
+    assignmentMode: AssignmentMode;
+    autoRandomize: boolean;
+    quickSpin: boolean;
+    spotPreset: SpotPresetKey;
+    /** Default starting count for the "Number of Spots" field. */
+    defaultSpotCount: number;
+    consolationPrize?: string;
+  };
+}
+
+/**
+ * Curated quick-start templates so sellers don't have to set every knob from
+ * scratch. The client renders these in the BreakCreationModal as a top-level
+ * picker; selecting one pre-fills the rest of the form (still editable).
+ */
+export const BREAK_TEMPLATES: BreakTemplate[] = [
+  {
+    id: "pick_your_nfl",
+    name: "Pick Your NFL Team",
+    description: "Buyers bid on specific NFL teams.",
+    config: {
+      spotType: "team",
+      assignmentMode: "pick_your",
+      autoRandomize: false,
+      quickSpin: false,
+      spotPreset: "nfl_teams",
+      defaultSpotCount: 32,
+    },
+  },
+  {
+    id: "random_nfl",
+    name: "Random NFL Team",
+    description: "Buyers bid on numbered spots; teams revealed via spin.",
+    config: {
+      spotType: "team",
+      assignmentMode: "pre_assigned",
+      autoRandomize: true,
+      quickSpin: true,
+      spotPreset: "nfl_teams",
+      defaultSpotCount: 32,
+    },
+  },
+  {
+    id: "pokemon_character",
+    name: "Pokemon Character Break",
+    description: "Pikachu, Charizard, etc., plus a guaranteed booster pack.",
+    config: {
+      spotType: "character",
+      assignmentMode: "pre_assigned",
+      autoRandomize: true,
+      quickSpin: true,
+      spotPreset: "pokemon_popular",
+      defaultSpotCount: 12,
+      consolationPrize: "Korean Booster Pack",
+    },
+  },
+  {
+    id: "pack_break",
+    name: "Per-Pack Break",
+    description: "Each spot is one pack from the box.",
+    config: {
+      spotType: "pack",
+      assignmentMode: "pre_assigned",
+      autoRandomize: true,
+      quickSpin: true,
+      spotPreset: "custom",
+      defaultSpotCount: 8,
+    },
+  },
+  {
+    id: "custom",
+    name: "Custom Break",
+    description: "Build your own from scratch.",
+    config: {
+      spotType: "slot",
+      assignmentMode: "pick_your",
+      autoRandomize: true,
+      quickSpin: true,
+      spotPreset: "custom",
+      defaultSpotCount: 10,
+    },
+  },
+];
+
+export function findTemplate(id: string): BreakTemplate | undefined {
+  return BREAK_TEMPLATES.find((t) => t.id === id);
+}
+
+/**
+ * Buyer-facing copy keyed by spotType. Used by the client modal title,
+ * "See {Spots|Teams|Characters}" buttons, and chat events.
+ */
+export const SPOT_TYPE_LABELS: Record<SpotType, { singular: string; plural: string; pickVerb: string }> = {
+  team: { singular: "team", plural: "teams", pickVerb: "Pick a Team" },
+  character: { singular: "character", plural: "characters", pickVerb: "Pick a Character" },
+  pack: { singular: "pack", plural: "packs", pickVerb: "Pick a Pack" },
+  hit: { singular: "hit", plural: "hits", pickVerb: "Pick a Hit" },
+  slot: { singular: "spot", plural: "spots", pickVerb: "Pick a Spot" },
+};

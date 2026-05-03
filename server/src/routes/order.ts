@@ -15,7 +15,7 @@ router.get("/", authenticate, async (req: AuthenticatedRequest, res: Response) =
       orderBy: { createdAt: "desc" },
       include: {
         items: { orderBy: { createdAt: "asc" } },
-        listing: { select: { breakName: true, breakFormat: true } },
+        listing: { select: { breakName: true, spotType: true, assignmentMode: true } },
         seller: { select: { username: true, displayName: true, avatarUrl: true } },
         stream: { select: { id: true, title: true } },
       },
@@ -34,7 +34,7 @@ router.get("/:id", authenticate, async (req: AuthenticatedRequest, res: Response
       where: { id: paramAsString(req.params.id) },
       include: {
         items: { orderBy: { createdAt: "asc" } },
-        listing: { select: { breakName: true, breakFormat: true } },
+        listing: { select: { breakName: true, spotType: true, assignmentMode: true } },
         seller: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
         buyer: { select: { id: true, username: true, displayName: true } },
         stream: { select: { id: true, title: true } },

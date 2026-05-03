@@ -13,7 +13,14 @@ import {
 } from "../services/break.service";
 import { emitToStream } from "../websocket/emitter";
 import { paramAsString } from "../lib/express-params";
-import { SHIPPING_PROFILES, SPOT_PRESETS } from "../lib/spot-presets";
+import {
+  ASSIGNMENT_MODES,
+  BREAK_TEMPLATES,
+  SHIPPING_PROFILES,
+  SPOT_PRESETS,
+  SPOT_TYPES,
+  SPOT_TYPE_LABELS,
+} from "../lib/spot-presets";
 import logger from "../lib/logger";
 
 const router = Router();
@@ -29,8 +36,11 @@ const createBreakSchema = z.object({
   breakName: z.string().min(1).max(120),
   breakDescription: z.string().max(2000).optional(),
   sellingMode: z.enum(["auction", "buy_it_now"]),
-  breakFormat: z.enum(["pick_your", "random"]),
+  spotType: z.enum(SPOT_TYPES),
+  assignmentMode: z.enum(ASSIGNMENT_MODES),
+  spotPool: z.array(z.string().min(1).max(120)).min(1).max(500),
   spotPreset: z.string().optional(),
+  consolationPrize: z.string().max(120).optional(),
   shippingProfile: z.string(),
   autoRandomize: z.boolean().optional(),
   quickSpin: z.boolean().optional(),
@@ -44,10 +54,13 @@ const ERROR_MAP: Record<string, { status: number; message: string }> = {
   TOO_MANY_SPOTS: { status: 400, message: "A break can have at most 500 spots" },
   INVALID_PRESET: { status: 400, message: "Unknown spot preset" },
   INVALID_SHIPPING_PROFILE: { status: 400, message: "Unknown shipping profile" },
+  INVALID_SPOT_TYPE: { status: 400, message: "Unknown spot type" },
+  INVALID_ASSIGNMENT_MODE: { status: 400, message: "Unknown assignment mode" },
   EMPTY_SPOT_NAME: { status: 400, message: "Spot names cannot be empty" },
   DUPLICATE_SPOT_NAME: { status: 400, message: "Duplicate spot name" },
   INVALID_STARTING_PRICE: { status: 400, message: "Each spot needs a starting price of at least $0.01" },
-  PRESET_TOO_SMALL: { status: 400, message: "The preset doesn't have enough teams for this number of spots" },
+  POOL_TOO_SMALL: { status: 400, message: "The pool doesn't have enough items for this many spots" },
+  POOL_MISMATCH: { status: 400, message: "Pool size must equal the number of spots" },
   BREAK_NOT_FOUND: { status: 404, message: "Break not found" },
   BREAK_ALREADY_COMPLETED: { status: 409, message: "Break already completed" },
 };
@@ -68,13 +81,18 @@ function handleError(res: Response, err: unknown) {
   res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong" } });
 }
 
-// GET /api/breaks/presets — list spot presets + shipping profiles for the seller UI
+// GET /api/breaks/presets — pools, shipping profiles, format enums, and
+// quick-start templates the seller UI needs to render the create-break form.
 router.get("/presets", (_req, res) => {
   res.json({
     presets: Object.fromEntries(
       Object.entries(SPOT_PRESETS).map(([key, names]) => [key, [...names]])
     ),
     shippingProfiles: SHIPPING_PROFILES,
+    spotTypes: SPOT_TYPES,
+    assignmentModes: ASSIGNMENT_MODES,
+    spotTypeLabels: SPOT_TYPE_LABELS,
+    templates: BREAK_TEMPLATES,
   });
 });
 

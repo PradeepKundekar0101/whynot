@@ -14,11 +14,15 @@ import {
   Trophy,
   ShoppingBag,
   Zap,
+  PauseCircle,
+  Loader2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { formatCents } from "@/lib/break-format";
 import type { Break, Spot, AckResponse } from "@/lib/break-types";
+import { spotTypeCopy } from "@/lib/break-types";
+import { findPendingSpinSpots } from "@/hooks/useStreamBreaks";
 import { AuctionSettingsModal, type AuctionSettings } from "./AuctionSettingsModal";
 
 interface BreakControlPanelProps {
@@ -37,12 +41,12 @@ function emit<T>(socket: Socket | null, event: string, data: T): Promise<AckResp
 }
 
 /**
- * Seller-side control panel for a single break. Reveals are fully automatic
- * (handled by the auction-end pipeline + scheduleAutoReveal on the server),
- * so this panel never shows a manual "Reveal Mode" UI; it's always the
- * auction-running surface.
+ * Seller-side control panel for a single break. The seller always sees this
+ * surface (no separate "Reveal Mode" panel) because reveals run themselves;
+ * the only seller-side reveal action is "Spin Now" for autoRandomize=false
+ * breaks, surfaced as a card per pending spot.
  *
- * For random-format breaks the seller still sees `revealedTeam` for every
+ * For random-assignment breaks the seller sees `revealedTeam` for every
  * spot — the API serializer surfaces it for sellers — so they can see what's
  * coming up next even before buyers do.
  */
@@ -109,6 +113,19 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
     setActionPending(null);
     if (!ack.ok) setActionError(ack.message ?? ack.error);
   };
+
+  const handleSpinNow = async (spot: Spot) => {
+    setActionError(null);
+    setActionPending(`spin-${spot.id}`);
+    const ack = await emit(socket, "seller:spin_now", { spotId: spot.id });
+    setActionPending(null);
+    if (!ack.ok) setActionError(ack.message ?? ack.error);
+  };
+
+  // Spots awaiting a manual spin (autoRandomize=false). Empty for pick_your /
+  // random_at_end / autoRandomize=true breaks.
+  const pendingSpinSpots = brk.autoRandomize ? [] : findPendingSpinSpots(brk);
+  const copy = spotTypeCopy(brk.spotType);
 
   // Completion summary — the break is done.
   if (brk.status === "completed") {
@@ -205,7 +222,7 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
         </div>
 
         <p className="text-[11px] uppercase tracking-wider text-white/50">
-          {brk.breakFormat === "random" ? "Random Team" : "Pick Your Team"} · {brk.sellingMode === "auction" ? "Auction" : "Buy It Now"}
+          {assignmentModeLabel(brk.assignmentMode)} {capitalize(copy.singular)} · {brk.sellingMode === "auction" ? "Auction" : "Buy It Now"}
         </p>
         <p className="text-sm font-semibold text-white truncate" title={brk.breakName}>
           {brk.breakName}
@@ -233,10 +250,11 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
           <p className="text-[11px] uppercase tracking-wider text-white/50 mb-2">Up Next</p>
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
             <p className="text-sm font-semibold">{upNextSpot.spotName}</p>
-            {/* For random format, show the seller what team is hiding behind this spot. */}
-            {brk.breakFormat === "random" && upNextSpot.revealedTeam && (
+            {/* For random assignment modes, show the seller what {team|character|pack}
+                is hiding behind this spot — pick_your already shows it via spotName. */}
+            {brk.assignmentMode !== "pick_your" && upNextSpot.revealedTeam && (
               <p className="text-xs text-primary font-semibold mt-0.5">
-                Hidden team: {upNextSpot.revealedTeam}
+                Hidden {copy.singular}: {upNextSpot.revealedTeam}
               </p>
             )}
             <p className="text-xs text-white/50 mt-0.5">{sold} of {totalSpots} sold</p>
@@ -259,6 +277,29 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
                 <p className="text-xs text-white/50 flex-1">Buy It Now — buyers can claim now</p>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Awaiting Spin (autoRandomize=false breaks only). One card per
+          sold-but-unrevealed spot; seller clicks Spin Now for theatrical
+          timing. */}
+      {pendingSpinSpots.length > 0 && (
+        <div className="px-3 py-3 border-b border-white/10">
+          <p className="text-[11px] uppercase tracking-wider text-amber-400 mb-2 inline-flex items-center gap-1.5">
+            <PauseCircle className="h-3.5 w-3.5" />
+            Awaiting Spin ({pendingSpinSpots.length})
+          </p>
+          <div className="flex flex-col gap-2">
+            {pendingSpinSpots.map((spot) => (
+              <PendingSpinCard
+                key={spot.id}
+                spot={spot}
+                copy={copy}
+                pending={actionPending === `spin-${spot.id}`}
+                onSpin={() => handleSpinNow(spot)}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -287,7 +328,7 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
             <SpotRow
               key={spot.id}
               spot={spot}
-              showHiddenTeam={brk.breakFormat === "random"}
+              showHiddenTeam={brk.assignmentMode !== "pick_your"}
               onStartAuction={brk.sellingMode === "auction" ? handleStartAuction : undefined}
               onSkip={handleSkipSpot}
               actionPending={actionPending}
@@ -328,11 +369,11 @@ export function BreakControlPanel({ break: brk, socket }: BreakControlPanelProps
         <button
           type="button"
           disabled
-          title="Coming soon — add a team mid-break"
+          title="Coming soon — add a spot mid-break"
           className="w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg border border-white/10 text-xs font-medium text-white/40 cursor-not-allowed"
         >
           <Plus className="h-3.5 w-3.5" />
-          Add Team
+          Add {capitalize(copy.singular)}
         </button>
       </div>
 
@@ -460,6 +501,83 @@ function SpotRow({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function assignmentModeLabel(mode: string): string {
+  switch (mode) {
+    case "pick_your":
+      return "Pick Your";
+    case "pre_assigned":
+      return "Random";
+    case "random_per_spot":
+      return "Random Per Spot";
+    case "random_at_end":
+      return "Random At End";
+    default:
+      return capitalize(mode);
+  }
+}
+
+/**
+ * Surfaced for autoRandomize=false breaks: each sold-but-unrevealed spot
+ * gets a card the seller can click to trigger the spin animation. Lets the
+ * seller pace the reveal for theatrical effect.
+ */
+function PendingSpinCard({
+  spot,
+  copy,
+  pending,
+  onSpin,
+}: {
+  spot: Spot;
+  copy: { singular: string };
+  pending: boolean;
+  onSpin: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">
+            {spot.spotName} → @{spot.winner?.username ?? "?"}
+          </p>
+          <p className="text-xs text-white/60">
+            Won for {formatCents(spot.soldPrice ?? 0)}
+          </p>
+          {spot.revealedTeam && (
+            <p className="text-xs text-primary mt-0.5 font-semibold">
+              Hidden {copy.singular}: {spot.revealedTeam}
+            </p>
+          )}
+          <p className="text-[11px] text-white/40 mt-0.5">
+            Buyers see &ldquo;Awaiting reveal…&rdquo; until you spin.
+          </p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onSpin}
+        disabled={pending}
+        className="w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 disabled:opacity-60 transition-colors"
+      >
+        {pending ? (
+          <>
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Spinning…
+          </>
+        ) : (
+          <>
+            <Play className="h-3.5 w-3.5" />
+            Spin Now
+          </>
+        )}
+      </button>
     </div>
   );
 }

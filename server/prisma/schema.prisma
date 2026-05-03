@@ -131,8 +131,33 @@ model Listing {
   breakName        String
   breakDescription String?
   sellingMode      String   // "auction" | "buy_it_now"
-  breakFormat      String   // "pick_your" | "random"
-  spotPreset       String?  // "nfl_teams" | "nba_teams" | "custom" | null
+
+  // ── Format ──────────────────────────────────────────────────────────────
+  /// Semantic kind of thing behind each spot. Drives buyer-facing copy
+  /// ("Pick a team" vs "Pick a character" vs "Pick a pack" etc.).
+  /// "team" | "character" | "pack" | "hit" | "slot"
+  spotType         String   @default("slot")
+
+  /// How spot contents get matched to buyers:
+  ///  - "pick_your"        — buyer picks the team/character at purchase; spotName IS the content; no reveal needed.
+  ///  - "pre_assigned"     — server shuffles spotPool at break creation; per-spot content hidden until that spot's auction ends.
+  ///  - "random_per_spot"  — server picks from unused spotPool at the moment of each reveal.
+  ///  - "random_at_end"    — server skips per-spot reveals; assigns everything in one batch when the break completes.
+  assignmentMode   String   @default("pick_your")
+
+  /// Pool of items (teams, characters, pack labels, etc.) the assignment
+  /// engine draws from. For "pick_your" this mirrors the spotNames list.
+  /// May be larger than the number of spots (e.g. 32 NFL teams, 10 spots).
+  spotPool         String[] @default([])
+
+  /// Optional preset key (e.g. "nfl_teams") used to seed spotPool. Kept for
+  /// UI labeling — assignment logic always reads from spotPool, never the preset.
+  spotPreset       String?
+
+  /// Optional bonus item every buyer receives in addition to their reveal
+  /// (e.g. "Korean Booster Pack" in a Pokemon character break).
+  consolationPrize String?
+
   shippingProfile  String   @default("4-7oz")
 
   // Lifecycle: "filling" | "breaking" | "completed" | "cancelled"
@@ -140,7 +165,13 @@ model Listing {
   startedAt                 DateTime?
   completedAt               DateTime?
 
+  // ── Reveal behaviour (now functional, not no-op) ────────────────────────
+  /// When true, each per-spot reveal fires automatically `quickSpin` ms after
+  /// the win. When false, the seller must click "Spin Now" to start the
+  /// reveal sequence — used for theatrical timing.
   autoRandomize    Boolean  @default(true)
+  /// true = 3 s spin animation; false = 6 s. Independent of autoRandomize:
+  /// it only controls how long the spin/reveal beat lasts once started.
   quickSpin        Boolean  @default(true)
 
   createdAt        DateTime @default(now())

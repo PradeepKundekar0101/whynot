@@ -57,7 +57,7 @@ function PersonalWinModalInner({ win, onClose }: { win: PersonalWin; onClose: ()
 
         <div className="mt-6 px-4 py-5 rounded-2xl bg-black/40 border border-primary/30">
           <p className="text-[10px] uppercase tracking-[0.2em] text-primary/80 mb-2">
-            Your team
+            Your reveal
           </p>
           <p className="text-3xl font-extrabold text-primary leading-tight reveal-bounce">
             {win.revealedTeam}

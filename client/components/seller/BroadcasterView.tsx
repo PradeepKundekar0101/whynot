@@ -365,6 +365,7 @@ export function BroadcasterView({
     breaks,
     refresh,
     winToast,
+    activeSpin,
     revealToast,
     confettiTick,
   } = useStreamBreaks(streamId, socket, user?.id);
@@ -651,7 +652,12 @@ export function BroadcasterView({
                   </span>
                 </div>
 
-                <AutoRevealToast winToast={winToast} revealToast={revealToast} />
+                <AutoRevealToast
+                  spotType={expandedBreak?.spotType ?? null}
+                  winToast={winToast}
+                  activeSpin={activeSpin}
+                  revealToast={revealToast}
+                />
               </div>
             </div>
 
@@ -900,7 +906,7 @@ function BreakSummaryCard({
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="text-[10px] uppercase tracking-wider text-white/40">
-            {brk.breakFormat === "random" ? "Random Team" : "Pick Your Team"} ·{" "}
+            {brk.assignmentMode === "pick_your" ? "Pick Your" : "Random"} {brk.spotType} ·{" "}
             {brk.sellingMode === "auction" ? "Auction" : "Buy It Now"}
           </p>
           <p className="text-sm font-semibold truncate">{brk.breakName}</p>

@@ -3,6 +3,7 @@
 import { Hourglass, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Break } from "@/lib/break-types";
+import { spotTypeCopy } from "@/lib/break-types";
 
 interface Props {
   break: Break;
@@ -10,13 +11,33 @@ interface Props {
   onSeeSpots: (b: Break) => void;
 }
 
+function formatLabelFor(brk: Break): string {
+  const copy = spotTypeCopy(brk.spotType);
+  const noun = copy.singular === "spot" ? "Spot" : copy.singular.charAt(0).toUpperCase() + copy.singular.slice(1);
+  switch (brk.assignmentMode) {
+    case "pick_your":
+      return `Pick Your ${noun}`;
+    case "pre_assigned":
+      return `Random ${noun}`;
+    case "random_per_spot":
+      return `Random ${noun} (Per Spot)`;
+    case "random_at_end":
+      return `Random ${noun} (At End)`;
+    default:
+      return noun;
+  }
+}
+
 export function BreakCardCompact({ break: brk, active, onSeeSpots }: Props) {
   const sold = brk.spots.filter((s) => s.winnerId).length;
   const total = brk.spots.length;
   const remaining = total - sold;
   const progress = total > 0 ? (sold / total) * 100 : 0;
-  const formatLabel = brk.breakFormat === "pick_your" ? "Pick Your Team" : "Random Team";
-  const buttonLabel = brk.breakFormat === "pick_your" ? "See Teams" : "See Spots";
+  const copy = spotTypeCopy(brk.spotType);
+  const formatLabel = formatLabelFor(brk);
+  const buttonLabel = brk.assignmentMode === "pick_your"
+    ? `See ${copy.plural.charAt(0).toUpperCase() + copy.plural.slice(1)}`
+    : "See Spots";
 
   const statusBadge =
     brk.status === "filling" ? (

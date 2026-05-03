@@ -9,7 +9,11 @@ import {
   startSpotAuction,
   skipSpotAuction,
 } from "../services/break.service";
-import { scheduleAutoReveal, maybeCompleteBreak } from "../services/reveal.service";
+import {
+  maybeScheduleAutoReveal,
+  maybeCompleteBreak,
+  triggerManualSpin,
+} from "../services/reveal.service";
 import { emitSystemEvent } from "../services/chat-events.service";
 import { broadcastStreamStats } from "../services/stream-stats.service";
 import prisma from "../lib/prisma";
@@ -64,6 +68,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_COUNTER_BID_TIME: "Counter-bid time must be 2, 3, 5, 7, or 10 seconds.",
   INVALID_DURATION: "Auction duration is invalid.",
   INVALID_STARTING_PRICE: "Starting price must be at least 1 cent.",
+  SPOT_NOT_WON: "This spot has no winner yet.",
+  SPOT_ALREADY_REVEALED: "This spot has already been revealed.",
+  SPIN_NOT_APPLICABLE: "This break doesn't use per-spot spins.",
+  SPIN_ALREADY_RUNNING: "A spin is already in progress for this spot.",
 };
 
 function ackError(ack: Ack, err: unknown) {
@@ -178,8 +186,9 @@ export function registerBreakHandlers(io: Server, socket: AuthenticatedSocket) {
         soldPrice: result.spot.soldPrice ?? 0,
       });
 
-      // Win toast — same shape as the auction-ended toast so the client overlay
-      // doesn't have to branch on selling mode.
+      // Win toast — carries assignmentMode + autoRandomize + quickSpin so
+      // the client knows whether to expect an auto-reveal, a manual spin,
+      // or no reveal at all (pick_your / random_at_end).
       io.to(`stream:${result.streamId}`).emit("spot:won", {
         spotId: result.spot.id,
         listingId: result.listingId,
@@ -188,6 +197,9 @@ export function registerBreakHandlers(io: Server, socket: AuthenticatedSocket) {
         winnerUsername: result.buyerUsername,
         winnerAvatarUrl: result.buyerAvatarUrl,
         soldPrice: result.spot.soldPrice ?? 0,
+        assignmentMode: result.assignmentMode,
+        autoRandomize: result.autoRandomize,
+        quickSpin: result.quickSpin,
       });
 
       io.to(`stream:${result.streamId}`).emit("wallet:balance_updated", {
@@ -207,8 +219,10 @@ export function registerBreakHandlers(io: Server, socket: AuthenticatedSocket) {
         logger.error(err, "broadcastStreamStats failed")
       );
 
-      // Schedule the T+3s auto-reveal on the same spot.
-      scheduleAutoReveal(result.spot.id);
+      // Reveal pipeline self-gates on assignmentMode + autoRandomize.
+      void maybeScheduleAutoReveal(result.spot.id).catch((err) =>
+        logger.error(err, "maybeScheduleAutoReveal failed (buy_now)")
+      );
 
       ack({ ok: true });
     } catch (err) {
@@ -307,6 +321,22 @@ export function registerBreakHandlers(io: Server, socket: AuthenticatedSocket) {
       void maybeCompleteBreak(updated.listingId).catch((err) =>
         logger.error(err, "maybeCompleteBreak failed after skip")
       );
+      ack({ ok: true });
+    } catch (err) {
+      ackError(ack, err);
+    }
+  });
+
+  // ─── Seller: trigger the manual spin (autoRandomize=false) ──────────────
+  socket.on("seller:spin_now", async (data: { spotId?: string }, rawAck) => {
+    const ack = safeAck(rawAck);
+    if (!socket.user) return ack({ ok: false, error: "UNAUTHENTICATED" });
+    if (!data?.spotId) return ack({ ok: false, error: "SPOT_NOT_FOUND" });
+
+    try {
+      await triggerManualSpin(data.spotId, socket.user.userId);
+      // No broadcast here — triggerManualSpin emits spot:spin_started
+      // immediately and spot:revealed when the spin lands.
       ack({ ok: true });
     } catch (err) {
       ackError(ack, err);

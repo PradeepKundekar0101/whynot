@@ -1,6 +1,14 @@
 import crypto from "crypto";
 import prisma from "../lib/prisma";
-import { isValidPreset, isValidShippingProfile, SPOT_PRESETS } from "../lib/spot-presets";
+import {
+  isValidPreset,
+  isValidShippingProfile,
+  isSpotType,
+  isAssignmentMode,
+  SPOT_PRESETS,
+  type AssignmentMode,
+  type SpotType,
+} from "../lib/spot-presets";
 import {
   captureHold,
   getAvailableBalance,
@@ -39,8 +47,27 @@ export interface CreateBreakInput {
   breakName: string;
   breakDescription?: string;
   sellingMode: "auction" | "buy_it_now";
-  breakFormat: "pick_your" | "random";
+  /** Semantic kind of thing behind each spot: team/character/pack/hit/slot. */
+  spotType: SpotType;
+  /**
+   * How spots are matched to their content:
+   *   pick_your        — buyer picks the team/character at purchase
+   *   pre_assigned     — server shuffles spotPool at creation; per-spot hidden until win
+   *   random_per_spot  — server picks from unused pool at the moment of each reveal
+   *   random_at_end    — assignments happen in one batch when the break completes
+   */
+  assignmentMode: AssignmentMode;
+  /**
+   * Pool of items (teams, characters, packs, etc.) the assignment engine
+   * draws from. For pick_your this MUST equal the spotName list (one item
+   * per spot). For pre_assigned / random_per_spot this MUST be at least as
+   * large as the number of spots.
+   */
+  spotPool: string[];
+  /** Optional preset key the pool was seeded from (UI labeling only). */
   spotPreset?: string;
+  /** Optional bonus item every buyer gets in addition to their reveal. */
+  consolationPrize?: string;
   shippingProfile: string;
   autoRandomize?: boolean;
   quickSpin?: boolean;
@@ -62,7 +89,19 @@ async function assertSellerOwnsStream(streamId: string, sellerId: string) {
 
 /**
  * Create a new break inside a Stream owned by the seller.
- * Pre-validates the spot rows; rejects if duplicate spot names or starting prices < 1 cent.
+ *
+ * Validates the format triple (spotType, assignmentMode, spotPool), then
+ * materializes spots according to the chosen assignment mode:
+ *
+ *   pick_your        — spotName = pool item, isRevealedToBuyers=true.
+ *                      Buyers pick by name; nothing to reveal later.
+ *   pre_assigned     — Fisher-Yates shuffle the pool, assign one per spot,
+ *                      hidden until the auction-end auto-reveal flips it.
+ *   random_per_spot  — spotName = "Spot #N", preAssignedTeam null, hidden.
+ *                      The reveal pipeline picks from unused pool on the fly.
+ *   random_at_end    — spotName = "Spot #N", preAssignedTeam null, hidden.
+ *                      Per-spot reveals are skipped; assignment happens in
+ *                      one batch at completeBreak time.
  */
 export async function createBreak(sellerId: string, input: CreateBreakInput) {
   await assertSellerOwnsStream(input.streamId, sellerId);
@@ -71,6 +110,8 @@ export async function createBreak(sellerId: string, input: CreateBreakInput) {
   if (input.spots.length > MAX_SPOTS_PER_BREAK) {
     throw new BreakError("TOO_MANY_SPOTS", { max: MAX_SPOTS_PER_BREAK });
   }
+  if (!isSpotType(input.spotType)) throw new BreakError("INVALID_SPOT_TYPE");
+  if (!isAssignmentMode(input.assignmentMode)) throw new BreakError("INVALID_ASSIGNMENT_MODE");
   if (input.spotPreset && input.spotPreset !== "custom" && !isValidPreset(input.spotPreset)) {
     throw new BreakError("INVALID_PRESET");
   }
@@ -91,25 +132,54 @@ export async function createBreak(sellerId: string, input: CreateBreakInput) {
     }
   }
 
-  // For random+preset breaks, draw the shuffled team pool from the preset and
-  // assign each spot a team at creation time. The team is hidden from buyers
-  // (isRevealedToBuyers=false) until the auction-end auto-reveal flips it.
-  // For pick-your, every spot's preAssignedTeam mirrors its spotName and is
-  // visible from the start (isRevealedToBuyers=true).
-  let preAssignedPool: (string | null)[] = new Array(input.spots.length).fill(null);
-  if (input.breakFormat === "random") {
-    const presetKey = input.spotPreset;
-    if (presetKey && presetKey !== "custom" && isValidPreset(presetKey)) {
-      const pool = SPOT_PRESETS[presetKey];
-      if (pool.length < input.spots.length) {
-        throw new BreakError("PRESET_TOO_SMALL", { preset: presetKey, available: pool.length });
-      }
-      const shuffled = shuffleArray(pool).slice(0, input.spots.length);
-      preAssignedPool = shuffled;
-    }
-    // For random+custom we leave preAssignedTeam null; the seller will need to
-    // upgrade to a preset to get auto-reveal. This matches the prior fallback.
+  // Normalize the pool — strip empty strings, dedupe (case-insensitive).
+  const normalizedPool: string[] = [];
+  const seenPool = new Set<string>();
+  for (const item of input.spotPool ?? []) {
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seenPool.has(key)) continue;
+    seenPool.add(key);
+    normalizedPool.push(trimmed);
   }
+
+  // Pool sizing rules per assignment mode.
+  if (input.assignmentMode === "pick_your") {
+    if (normalizedPool.length !== input.spots.length) {
+      throw new BreakError("POOL_MISMATCH", {
+        reason: "pick_your requires one pool entry per spot",
+        poolSize: normalizedPool.length,
+        spotCount: input.spots.length,
+      });
+    }
+  } else if (
+    input.assignmentMode === "pre_assigned" ||
+    input.assignmentMode === "random_per_spot" ||
+    input.assignmentMode === "random_at_end"
+  ) {
+    if (normalizedPool.length < input.spots.length) {
+      throw new BreakError("POOL_TOO_SMALL", {
+        poolSize: normalizedPool.length,
+        spotCount: input.spots.length,
+      });
+    }
+  }
+
+  // For pre_assigned, shuffle the pool now and slice off one team per spot.
+  // For everything else, no per-spot pool slot is decided up-front.
+  let preAssignedPerSpot: (string | null)[] = new Array(input.spots.length).fill(null);
+  if (input.assignmentMode === "pre_assigned") {
+    preAssignedPerSpot = shuffleArray(normalizedPool).slice(0, input.spots.length);
+  } else if (input.assignmentMode === "pick_your") {
+    // Pool is the spot-name list, but we still mirror it into preAssignedTeam
+    // so the reveal/Order code paths don't have to special-case pick_your.
+    preAssignedPerSpot = input.spots.map((s) => s.spotName.trim());
+  }
+
+  // Pick-your spots have visible names from creation; everything else is
+  // hidden behind a numbered "Spot #N" label.
+  const isPickYour = input.assignmentMode === "pick_your";
 
   const listing = await prisma.listing.create({
     data: {
@@ -118,8 +188,11 @@ export async function createBreak(sellerId: string, input: CreateBreakInput) {
       breakName: input.breakName,
       breakDescription: input.breakDescription,
       sellingMode: input.sellingMode,
-      breakFormat: input.breakFormat,
+      spotType: input.spotType,
+      assignmentMode: input.assignmentMode,
+      spotPool: normalizedPool,
       spotPreset: input.spotPreset,
+      consolationPrize: input.consolationPrize?.trim() || null,
       shippingProfile: input.shippingProfile,
       status: "filling",
       autoRandomize: input.autoRandomize ?? true,
@@ -127,16 +200,11 @@ export async function createBreak(sellerId: string, input: CreateBreakInput) {
       spots: {
         create: input.spots.map((s, i) => ({
           spotNumber: i + 1,
-          // Random format: spotName stays "Spot #N" (the buyer-facing label).
-          // Pick-your: spotName is the team name.
-          spotName: input.breakFormat === "random" ? `Spot #${i + 1}` : s.spotName.trim(),
+          spotName: isPickYour ? s.spotName.trim() : `Spot #${i + 1}`,
           description: s.description,
           startingPrice: s.startingPrice,
-          preAssignedTeam:
-            input.breakFormat === "pick_your" ? s.spotName.trim() : preAssignedPool[i],
-          // Pick-your spots are public from the start; random spots stay hidden
-          // until the auction-end auto-reveal pipeline flips this.
-          isRevealedToBuyers: input.breakFormat === "pick_your",
+          preAssignedTeam: preAssignedPerSpot[i],
+          isRevealedToBuyers: isPickYour,
         })),
       },
     },
@@ -298,8 +366,11 @@ interface RawBreak {
   breakName: string;
   breakDescription: string | null;
   sellingMode: string;
-  breakFormat: string;
+  spotType: string;
+  assignmentMode: string;
+  spotPool: string[];
   spotPreset: string | null;
+  consolationPrize: string | null;
   shippingProfile: string;
   status: string;
   startedAt: Date | null;
@@ -318,8 +389,17 @@ export interface SerializedBreak {
   breakName: string;
   breakDescription: string | null;
   sellingMode: string;
-  breakFormat: string;
+  spotType: string;
+  assignmentMode: string;
+  /**
+   * Pool of items used by the assignment engine. Surfaced in full to the
+   * seller; for non-seller buyers we only expose it once the break is done
+   * (so peeking at the spotPool can't leak outcomes for in-progress random
+   * breaks). For pick_your, the pool IS the public spotName list — always safe.
+   */
+  spotPool: string[];
   spotPreset: string | null;
+  consolationPrize: string | null;
   shippingProfile: string;
   status: string;
   startedAt: string | null;
@@ -336,6 +416,12 @@ export function serializeBreak(
   sellerId?: string | null
 ): SerializedBreak {
   const isSeller = !!viewerUserId && (sellerId ?? brk.stream?.sellerId) === viewerUserId;
+  // The pool is safe to expose freely for pick_your (it IS the public spotName
+  // list) and once the break is completed (assignments are now public). For
+  // other modes mid-break, hide it from buyers — knowing the pool would let
+  // them eliminate possibilities for unrevealed spots.
+  const exposePool =
+    isSeller || brk.assignmentMode === "pick_your" || brk.status === "completed";
   return {
     id: brk.id,
     streamId: brk.streamId,
@@ -343,8 +429,11 @@ export function serializeBreak(
     breakName: brk.breakName,
     breakDescription: brk.breakDescription,
     sellingMode: brk.sellingMode,
-    breakFormat: brk.breakFormat,
+    spotType: brk.spotType,
+    assignmentMode: brk.assignmentMode,
+    spotPool: exposePool ? brk.spotPool : [],
     spotPreset: brk.spotPreset,
+    consolationPrize: brk.consolationPrize,
     shippingProfile: brk.shippingProfile,
     status: brk.status,
     startedAt: brk.startedAt?.toISOString() ?? null,
@@ -633,7 +722,9 @@ export async function buyNowSpot(spotId: string, buyerId: string) {
           select: {
             id: true,
             sellingMode: true,
-            breakFormat: true,
+            assignmentMode: true,
+            autoRandomize: true,
+            quickSpin: true,
             status: true,
             stream: { select: { id: true, sellerId: true } },
           },
@@ -701,7 +792,9 @@ export async function buyNowSpot(spotId: string, buyerId: string) {
       buyerUsername: buyer.username,
       buyerAvatarUrl: buyer.avatarUrl,
       newBalance: buyer.walletBalance,
-      breakFormat: spot.listing.breakFormat,
+      assignmentMode: spot.listing.assignmentMode as AssignmentMode,
+      autoRandomize: spot.listing.autoRandomize,
+      quickSpin: spot.listing.quickSpin,
     };
   });
 }
@@ -720,7 +813,15 @@ export async function endSpotAuction(spotId: string) {
     const spot = await tx.spot.findUnique({
       where: { id: spotId },
       include: {
-        listing: { select: { id: true, breakFormat: true, autoRandomize: true, stream: { select: { id: true, sellerId: true } } } },
+        listing: {
+          select: {
+            id: true,
+            assignmentMode: true,
+            autoRandomize: true,
+            quickSpin: true,
+            stream: { select: { id: true, sellerId: true } },
+          },
+        },
       },
     });
     if (!spot || spot.auctionStatus !== "active") return null;
@@ -745,8 +846,9 @@ export async function endSpotAuction(spotId: string) {
         soldPrice: 0,
         streamId: spot.listing.stream.id,
         listingId: spot.listing.id,
-        breakFormat: spot.listing.breakFormat as "pick_your" | "random",
+        assignmentMode: spot.listing.assignmentMode as AssignmentMode,
         autoRandomize: spot.listing.autoRandomize,
+        quickSpin: spot.listing.quickSpin,
       };
     }
 
@@ -788,8 +890,9 @@ export async function endSpotAuction(spotId: string) {
       soldPrice: soldPrice ?? 0,
       streamId: spot.listing.stream.id,
       listingId: spot.listing.id,
-      breakFormat: spot.listing.breakFormat as "pick_your" | "random",
+      assignmentMode: spot.listing.assignmentMode as AssignmentMode,
       autoRandomize: spot.listing.autoRandomize,
+      quickSpin: spot.listing.quickSpin,
     };
   });
 }

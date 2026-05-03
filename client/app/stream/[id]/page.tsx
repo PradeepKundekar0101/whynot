@@ -126,6 +126,7 @@ export default function StreamWatchPage() {
     breaks,
     loading: breaksLoading,
     winToast,
+    activeSpin,
     revealToast,
     personalWin,
     dismissPersonalWin,
@@ -426,7 +427,12 @@ export default function StreamWatchPage() {
                 ) : null}
               </div>
 
-              <AutoRevealToast winToast={winToast} revealToast={revealToast} />
+              <AutoRevealToast
+                spotType={focusBreak?.spotType ?? null}
+                winToast={winToast}
+                activeSpin={activeSpin}
+                revealToast={revealToast}
+              />
 
               {activeSpotInfo ? (
                 <ActiveAuctionOverlay

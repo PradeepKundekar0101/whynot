@@ -2,7 +2,7 @@ import prisma from "../lib/prisma";
 import logger from "../lib/logger";
 import { emitToStream } from "../websocket/emitter";
 import { endSpotAuction } from "../services/break.service";
-import { scheduleAutoReveal, maybeCompleteBreak } from "../services/reveal.service";
+import { maybeScheduleAutoReveal, maybeCompleteBreak } from "../services/reveal.service";
 import { emitSystemEvent } from "../services/chat-events.service";
 import { broadcastStreamStats } from "../services/stream-stats.service";
 
@@ -62,6 +62,9 @@ export async function endExpiredSpotAuctions(): Promise<number> {
           winnerUsername: result.winnerUsername,
           winnerAvatarUrl: result.winnerAvatarUrl ?? null,
           soldPrice: result.soldPrice,
+          assignmentMode: result.assignmentMode,
+          autoRandomize: result.autoRandomize,
+          quickSpin: result.quickSpin,
         });
 
         void emitSystemEvent(result.streamId, {
@@ -76,15 +79,18 @@ export async function endExpiredSpotAuctions(): Promise<number> {
           logger.error(err, "broadcastStreamStats failed")
         );
 
-        // Schedule the T+3s auto-reveal on the same spot.
-        scheduleAutoReveal(result.spot.id);
-      } else {
-        // Auction ended with no winner — nothing to reveal, but the break
-        // might be complete now if this was the last unresolved spot.
-        void maybeCompleteBreak(result.listingId).catch((err) =>
-          logger.error(err, "maybeCompleteBreak failed")
+        // The reveal pipeline self-gates on assignmentMode + autoRandomize.
+        // For pick_your / random_at_end / autoRandomize=false this no-ops.
+        void maybeScheduleAutoReveal(result.spot.id).catch((err) =>
+          logger.error(err, "maybeScheduleAutoReveal failed")
         );
       }
+
+      // No winner OR random_at_end: still nudge completion in case this was
+      // the last blocking spot.
+      void maybeCompleteBreak(result.listingId).catch((err) =>
+        logger.error(err, "maybeCompleteBreak failed")
+      );
 
       ended++;
     } catch (err) {
